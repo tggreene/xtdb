@@ -74,6 +74,12 @@ resource "azurerm_role_assignment" "cloud_benchmark" {
   scope                = azurerm_resource_group.cloud_benchmark.id
 }
 
+resource "azurerm_role_assignment" "cloud_benchmark_monitoring" {
+  principal_id         = azurerm_user_assigned_identity.cloud_benchmark.principal_id
+  role_definition_name = "Monitoring Metrics Publisher"
+  scope                = azurerm_resource_group.cloud_benchmark.id
+}
+
 resource "azurerm_container_app" "cloud_benchmark" {
   name                         = "cloud-benchmark"
   resource_group_name          = azurerm_resource_group.cloud_benchmark.name

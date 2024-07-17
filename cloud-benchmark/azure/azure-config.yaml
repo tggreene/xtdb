@@ -16,5 +16,4 @@ txLog: !Local
 storage: !Local
   path: /var/lib/xtdb/storage
 
-metrics: !Prometheus
-  port: 5000
+metrics: !AzureMonitor
