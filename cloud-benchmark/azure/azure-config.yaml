@@ -1,0 +1,20 @@
+# CONFIG FOR RUNNING WITH AZURE INFRA
+# txLog: !Kafka
+#   bootstrapServers: !Env KAFKA_BOOTSTRAP_SERVERS
+#   topicName: !Env XTDB_TOPIC_NAME
+
+# storage: !Remote
+#   objectStore: !Azure
+#     bucket: !Env XTDB_S3_BUCKET
+#     snsTopicArn: !Env XTDB_SNS_TOPIC
+#     prefix: "xtdb-object-store"
+#   localDiskCache: /var/lib/xtdb/buffers
+
+txLog: !Local
+  path: /var/lib/xtdb/log
+
+storage: !Local
+  path: /var/lib/xtdb/storage
+
+metrics: !Prometheus
+  port: 5000
