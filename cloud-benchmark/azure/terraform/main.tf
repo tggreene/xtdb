@@ -15,7 +15,7 @@ resource "azurerm_virtual_network" "cloud_benchmark" {
 # Blob Storage Configuration
 
 resource "azurerm_storage_account" "cloud_benchmark" {
-  name                     = "cloudbenchmark"
+  name                     = "xtdbazurebenchmark"
   resource_group_name      = azurerm_resource_group.cloud_benchmark.name
   location                 = azurerm_resource_group.cloud_benchmark.location
   account_tier             = "Standard"
@@ -23,7 +23,7 @@ resource "azurerm_storage_account" "cloud_benchmark" {
 }
 
 resource "azurerm_storage_container" "cloud_benchmark" {
-  name                  = "cloudbenchmarkstorage"
+  name                  = "xtdbazurebenchmarkstorage"
   storage_account_name  = azurerm_storage_account.cloud_benchmark.name
   container_access_type = "private"
 }
