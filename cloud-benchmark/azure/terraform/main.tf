@@ -23,9 +23,39 @@ resource "azurerm_storage_account" "cloud_benchmark" {
 }
 
 resource "azurerm_storage_container" "cloud_benchmark" {
-  name                  = "xtdbazurebenchmarkstorage"
+  name                  = "xtdbazurebenchmarkcontainer"
   storage_account_name  = azurerm_storage_account.cloud_benchmark.name
   container_access_type = "private"
+}
+
+# Service Bus Setup
+resource "azurerm_eventgrid_system_topic" "cloud_benchmark" {
+  name                = "cloud-benchmark-system-topic"
+  location            = azurerm_resource_group.cloud_benchmark.location
+  resource_group_name = azurerm_resource_group.cloud_benchmark.name
+
+  source_arm_resource_id = azurerm_storage_account.cloud_benchmark.id
+  topic_type             = "Microsoft.Storage.StorageAccounts"
+}
+
+resource "azurerm_servicebus_namespace" "cloud_benchmark" {
+  name                = "cloud-benchmark-eventbus"
+  location            = azurerm_resource_group.cloud_benchmark.location
+  resource_group_name = azurerm_resource_group.cloud_benchmark.name
+  sku                 = "Standard"
+}
+
+resource "azurerm_servicebus_topic" "cloud_benchmark" {
+  name         = "cloud-benchmark-servicebus-topic"
+  namespace_id = azurerm_servicebus_namespace.cloud_benchmark.id
+}
+
+resource "azurerm_eventgrid_system_topic_event_subscription" "cloud_benchmark" {
+  name                          = "cloud-benchmark-system-topic-servicebus-topic-subscription"
+  system_topic                  = azurerm_eventgrid_system_topic.cloud_benchmark.name
+  resource_group_name           = azurerm_resource_group.cloud_benchmark.name
+  event_delivery_schema         = "EventGridSchema"
+  service_bus_topic_endpoint_id = azurerm_servicebus_topic.cloud_benchmark.id
 }
 
 # Event Hub Configuration
@@ -95,6 +125,24 @@ resource "azurerm_role_assignment" "cloud_benchmark_monitoring" {
   scope                = azurerm_resource_group.cloud_benchmark.id
 }
 
+resource "azurerm_role_assignment" "cloud_benchmark_blob_contributor" {
+  principal_id         = azurerm_user_assigned_identity.cloud_benchmark.principal_id
+  role_definition_name = "Storage Blob Data Contributor"
+  scope                = azurerm_storage_account.cloud_benchmark.id
+}
+
+resource "azurerm_role_assignment" "cloud_benchmark_eventgrid_contributor" {
+  principal_id         = azurerm_user_assigned_identity.cloud_benchmark.principal_id
+  role_definition_name = "EventGrid Contributor"
+  scope                = azurerm_eventgrid_system_topic.cloud_benchmark.id
+}
+
+resource "azurerm_role_assignment" "cloud_benchmark_servicebus_contributor" {
+  principal_id         = azurerm_user_assigned_identity.cloud_benchmark.principal_id
+  role_definition_name = "Azure Service Bus Data Owner"
+  scope                = azurerm_servicebus_namespace.cloud_benchmark.id
+}
+
 resource "azurerm_container_app" "cloud_benchmark_single_node" {
   count                        = var.run_single_node ? 1 : 0
   name                         = "cloud-benchmark-single-node"
@@ -154,6 +202,26 @@ resource "azurerm_container_app" "cloud_benchmark_single_node" {
       env {
         name  = "AUCTIONMARK_LOAD_PHASE_ONLY"
         value = false
+      }
+
+      env {
+        name  = "XTDB_AZURE_STORAGE_ACCOUNT"
+        value = azurerm_storage_account.cloud_benchmark.name
+      }
+
+      env {
+        name  = "XTDB_AZURE_STORAGE_CONTAINER"
+        value = azurerm_storage_container.cloud_benchmark.name
+      }
+
+      env {
+        name  = "XTDB_AZURE_SERVICE_BUS_NAMESPACE"
+        value = azurerm_servicebus_namespace.cloud_benchmark.name
+      }
+
+      env {
+        name  = "XTDB_AZURE_SERVICE_BUS_TOPIC_NAME"
+        value = azurerm_servicebus_topic.cloud_benchmark.name
       }
 
       env {
