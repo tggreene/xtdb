@@ -1,28 +1,4 @@
-terraform {
-  required_providers {
-    azurerm = {
-      source  = "hashicorp/azurerm"
-      version = "=3.111.0"
-    }
-  }
-
-  backend "azurerm" {
-      resource_group_name  = "benchmark-terraform"
-      storage_account_name = "benchmarkterraform"
-      container_name       = "benchmarkterraform"
-      key                  = "terraform.tfstate"
-  }
-}
-
-provider "azurerm" {
-  features {}
-}
-
-variable "slack_webhook_url" {
-  description = "The URL of the Slack webhook to send notifications to"
-  type = string
-  sensitive = true
-}
+# Resource group setup
 
 resource "azurerm_resource_group" "cloud_benchmark" {
   name     = "cloud-benchmark-resources"
@@ -35,6 +11,45 @@ resource "azurerm_virtual_network" "cloud_benchmark" {
   location            = azurerm_resource_group.cloud_benchmark.location
   address_space       = ["10.0.0.0/16"]
 }
+
+# Blob Storage Configuration
+
+resource "azurerm_storage_account" "cloud_benchmark" {
+  name                     = "cloudbenchmark"
+  resource_group_name      = azurerm_resource_group.cloud_benchmark.name
+  location                 = azurerm_resource_group.cloud_benchmark.location
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+}
+
+resource "azurerm_storage_container" "cloud_benchmark" {
+  name                  = "cloudbenchmarkstorage"
+  storage_account_name  = azurerm_storage_account.cloud_benchmark.name
+  container_access_type = "private"
+}
+
+# Event Hub Configuration
+
+# resource "azurerm_eventhub_namespace" "cloud_benchmark" {
+#   name                = "cloudBenchmarkNamespace"
+#   location            = azurerm_resource_group.cloud_benchmark.location
+#   resource_group_name = azurerm_resource_group.cloud_benchmark.name
+#   sku                 = "Standard"
+#   capacity            = 1
+
+#   tags = {
+#     environment = "Production"
+#   }
+# }
+
+# resource "azurerm_eventhub" "cloud_benchmark" {
+#   name                = "cloudBenchmarkHub"
+#   namespace_name      = azurerm_eventhub_namespace.cloud_benchmark.name
+#   resource_group_name = azurerm_resource_group.cloud_benchmark.name
+#   partition_count     = 2
+#   message_retention   = 1
+# }
+
 
 # Container App Configuration
 
@@ -80,8 +95,9 @@ resource "azurerm_role_assignment" "cloud_benchmark_monitoring" {
   scope                = azurerm_resource_group.cloud_benchmark.id
 }
 
-resource "azurerm_container_app" "cloud_benchmark" {
-  name                         = "cloud-benchmark"
+resource "azurerm_container_app" "cloud_benchmark_single_node" {
+  count                        = var.run_single_node ? 1 : 0
+  name                         = "cloud-benchmark-single-node"
   resource_group_name          = azurerm_resource_group.cloud_benchmark.name
   container_app_environment_id = azurerm_container_app_environment.cloud_benchmark.id
   revision_mode                = "Single"
@@ -100,12 +116,12 @@ resource "azurerm_container_app" "cloud_benchmark" {
 
   ingress {
     external_enabled = true
-    target_port = 5000
-    transport = "auto"
+    target_port      = 5000
+    transport        = "auto"
 
     traffic_weight {
       latest_revision = true
-      percentage = 100
+      percentage      = 100
     }
   }
 
@@ -122,26 +138,26 @@ resource "azurerm_container_app" "cloud_benchmark" {
 
       env {
         name  = "AUCTIONMARK_DURATION"
-        value = "PT10M"
+        value = var.auctionmark_duration
       }
 
       env {
-        name = "AUCTIONMARK_SCALE_FACTOR"
-        value = 0.1
+        name  = "AUCTIONMARK_SCALE_FACTOR"
+        value = var.auctionmark_scale_factor
       }
 
       env {
-        name = "AUCTIONMARK_LOAD_PHASE"
+        name  = "AUCTIONMARK_LOAD_PHASE"
         value = true
       }
 
       env {
-        name = "AUCTIONMARK_LOAD_PHASE_ONLY"
+        name  = "AUCTIONMARK_LOAD_PHASE_ONLY"
         value = false
       }
 
       env {
-        name = "CLOUD_PLATFORM_NAME"
+        name  = "CLOUD_PLATFORM_NAME"
         value = "Azure"
       }
 
@@ -152,41 +168,3 @@ resource "azurerm_container_app" "cloud_benchmark" {
     }
   }
 }
-
-# Blob Storage Configuration
-
-# resource "azurerm_storage_account" "cloud_benchmark" {
-#   name                     = "cloudbenchmark"
-#   resource_group_name      = azurerm_resource_group.cloud_benchmark.name
-#   location                 = azurerm_resource_group.cloud_benchmark.location
-#   account_tier             = "Standard"
-#   account_replication_type = "LRS"
-# }
-
-# resource "azurerm_storage_container" "cloud_benchmark" {
-#   name                  = "cloudbenchmarkstorage"
-#   storage_account_name  = azurerm_storage_account.cloud_benchmark.name
-#   container_access_type = "private"
-# }
-
-# Event Hub Configuration
-
-# resource "azurerm_eventhub_namespace" "cloud_benchmark" {
-#   name                = "cloudBenchmarkNamespace"
-#   location            = azurerm_resource_group.cloud_benchmark.location
-#   resource_group_name = azurerm_resource_group.cloud_benchmark.name
-#   sku                 = "Standard"
-#   capacity            = 1
-
-#   tags = {
-#     environment = "Production"
-#   }
-# }
-
-# resource "azurerm_eventhub" "cloud_benchmark" {
-#   name                = "cloudBenchmarkHub"
-#   namespace_name      = azurerm_eventhub_namespace.cloud_benchmark.name
-#   resource_group_name = azurerm_resource_group.cloud_benchmark.name
-#   partition_count     = 2
-#   message_retention   = 1
-# }
