@@ -13,6 +13,6 @@ storage: !Remote
     serviceBusNamespace: !Env XTDB_AZURE_SERVICE_BUS_NAMESPACE
     serviceBusTopicName: !Env XTDB_AZURE_SERVICE_BUS_TOPIC_NAME
     prefix: "xtdb-object-store"
-  localDiskCache: /var/lib/xtdb/buffers
+  localDiskCache: !Env XTDB_LOCAL_DISK_CACHE
 
 metrics: !AzureMonitor

@@ -200,6 +200,11 @@ resource "azurerm_container_app" "cloud_benchmark_single_node" {
       }
 
       env {
+        name = "XTDB_LOCAL_DISK_CACHE"
+        value = "/var/lib/xtdb/disk-cache-1"
+      }
+
+      env {
         name  = "XTDB_AZURE_STORAGE_ACCOUNT"
         value = azurerm_storage_account.cloud_benchmark.name
       }
@@ -241,3 +246,8 @@ resource "azurerm_container_app" "cloud_benchmark_single_node" {
     }
   }
 }
+
+# TODO: Multi node config could probably be added here - taking inspiration 
+# from the above. Generally speaking, similar to how I'd handle in kubernetes:
+# - InitContainer that runs first which ONLY runs load phase (ie, AUCTIONMARK_LOAD_PHASE_ONLY = true)
+# - Can run a number of parallel containers that point to different local disk cache paths
