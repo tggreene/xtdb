@@ -60,26 +60,21 @@ resource "azurerm_eventgrid_system_topic_event_subscription" "cloud_benchmark" {
 
 # Event Hub Configuration
 
-# resource "azurerm_eventhub_namespace" "cloud_benchmark" {
-#   name                = "cloudBenchmarkNamespace"
-#   location            = azurerm_resource_group.cloud_benchmark.location
-#   resource_group_name = azurerm_resource_group.cloud_benchmark.name
-#   sku                 = "Standard"
-#   capacity            = 1
+resource "azurerm_eventhub_namespace" "cloud_benchmark" {
+  name                = "cloud-benchmark-eventhub-namespace"
+  location            = azurerm_resource_group.cloud_benchmark.location
+  resource_group_name = azurerm_resource_group.cloud_benchmark.name
+  sku                 = "Standard"
+  capacity            = 1
+}
 
-#   tags = {
-#     environment = "Production"
-#   }
-# }
-
-# resource "azurerm_eventhub" "cloud_benchmark" {
-#   name                = "cloudBenchmarkHub"
-#   namespace_name      = azurerm_eventhub_namespace.cloud_benchmark.name
-#   resource_group_name = azurerm_resource_group.cloud_benchmark.name
-#   partition_count     = 2
-#   message_retention   = 1
-# }
-
+resource "azurerm_eventhub" "cloud_benchmark" {
+  name                = "cloud-benchmark-eventhub"
+  namespace_name      = azurerm_eventhub_namespace.cloud_benchmark.name
+  resource_group_name = azurerm_resource_group.cloud_benchmark.name
+  partition_count     = 1
+  message_retention   = 1
+}
 
 # Container App Configuration
 
@@ -222,6 +217,16 @@ resource "azurerm_container_app" "cloud_benchmark_single_node" {
       env {
         name  = "XTDB_AZURE_SERVICE_BUS_TOPIC_NAME"
         value = azurerm_servicebus_topic.cloud_benchmark.name
+      }
+
+      env {
+        name = "XTDB_AZURE_EVENTHUB_NAMESPACE"
+        value = azurerm_eventhub_namespace.cloud_benchmark.name
+      }
+
+      env {
+        name = "XTDB_AZURE_EVENTHUB_NAME"
+        value = azurerm_eventhub.cloud_benchmark.name
       }
 
       env {
