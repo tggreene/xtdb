@@ -205,6 +205,11 @@ resource "azurerm_container_app" "cloud_benchmark_single_node" {
       }
 
       env {
+        name = "XTDB_AZURE_USER_MANAGED_IDENTITY_CLIENT_ID"
+        value = azurerm_user_assigned_identity.cloud_benchmark.client_id
+      }
+
+      env {
         name  = "XTDB_AZURE_STORAGE_ACCOUNT"
         value = azurerm_storage_account.cloud_benchmark.name
       }
