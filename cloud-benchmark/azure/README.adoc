@@ -102,13 +102,14 @@ docker push cloudbenchmarkregistry.azurecr.io/xtdb-azure-bench
 
 Deploying/running the container app is as simple as updating the `terraform.tfvars` file and applying the terraform config. Within the file, you can update a number of Auctionmark/XTDB options/parameters prior to running the container app.
 
-To do a **single node run** of Auctionmark:
-* Set `run_single_node` to `true`
+You can either update the file and run `terraform apply` again, or you can set the parameters using the terraform CLI.
 
-Once you have set all of your desired parameters, simply re-run:
+Ie, to run with a single node:
 ```bash
-terraform apply
+terraform apply -var run_single_node=true
 ```
+
+NOTE: The `run_single_node` variable is a boolean, and will default to `false`. If you wish to destroy a running container app, ensure this is false and simply re-run `terraform apply`.
 
 === Monitoring Logs
 
