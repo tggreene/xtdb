@@ -48,6 +48,7 @@ resource "azurerm_servicebus_namespace" "cloud_benchmark" {
 resource "azurerm_servicebus_topic" "cloud_benchmark" {
   name         = "cloud-benchmark-servicebus-topic"
   namespace_id = azurerm_servicebus_namespace.cloud_benchmark.id
+  default_message_ttl = "PT5M"
 }
 
 resource "azurerm_eventgrid_system_topic_event_subscription" "cloud_benchmark" {
