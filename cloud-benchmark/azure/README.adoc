@@ -122,3 +122,12 @@ az containerapp logs show --resource-group cloud-benchmark-resources --name clou
 This will print the last 100 lines of the logs, and then follow the logs as they are printed.
 
 
+== Clearing up resources
+
+To clear up the storage used by the XTDB node (ie, the contents of the blob storage), you can run the following script:
+
+```
+./scripts/clear-azure-storage.sh
+```
+
+NOTE: This is currently required between runs when using remote object storage and Local Directory based logs.
