@@ -157,17 +157,6 @@ resource "azurerm_container_app" "cloud_benchmark_single_node" {
     identity = azurerm_user_assigned_identity.cloud_benchmark.id
   }
 
-  ingress {
-    external_enabled = true
-    target_port      = 5000
-    transport        = "auto"
-
-    traffic_weight {
-      latest_revision = true
-      percentage      = 100
-    }
-  }
-
   template {
     max_replicas = 1
     min_replicas = 1
