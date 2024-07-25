@@ -3,8 +3,12 @@
 #   bootstrapServers: !Env KAFKA_BOOTSTRAP_SERVERS
 #   topicName: !Env XTDB_TOPIC_NAME
 
-txLog: !Local
-  path: /var/lib/xtdb/log
+txLog: !Azure
+  namespace: !Env XTDB_AZURE_EVENTHUB_NAMESPACE
+  eventHubName: !Env XTDB_AZURE_EVENTHUB_NAME
+  maxWaitTime: PT5S
+  pollSleepDuration: PT1S
+  userManagedIdentityClientId: !Env XTDB_AZURE_USER_MANAGED_IDENTITY_CLIENT_ID
 
 storage: !Remote
   objectStore: !Azure

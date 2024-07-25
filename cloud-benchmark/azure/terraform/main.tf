@@ -139,6 +139,18 @@ resource "azurerm_role_assignment" "cloud_benchmark_servicebus_contributor" {
   scope                = azurerm_servicebus_namespace.cloud_benchmark.id
 }
 
+resource "azurerm_role_assignment" "cloud_benchmark_eventhub_send" {
+  principal_id         = azurerm_user_assigned_identity.cloud_benchmark.principal_id
+  role_definition_name = "Azure Event Hubs Data Sender"
+  scope                = azurerm_eventhub.cloud_benchmark.id
+}
+
+resource "azurerm_role_assignment" "cloud_benchmark_eventhub_receive" {
+  principal_id         = azurerm_user_assigned_identity.cloud_benchmark.principal_id
+  role_definition_name = "Azure Event Hubs Data Receiver"
+  scope                = azurerm_eventhub.cloud_benchmark.id
+}
+
 resource "azurerm_container_app" "cloud_benchmark_single_node" {
   count                        = var.run_single_node ? 1 : 0
   name                         = "cloud-benchmark-single-node"
