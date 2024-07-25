@@ -28,6 +28,14 @@ resource "azurerm_storage_container" "cloud_benchmark" {
   container_access_type = "private"
 }
 
+# Fileshare Configuration
+
+resource "azurerm_storage_share" "cloud_benchmark" {
+  name                 = "cloudbenchmarkshare"
+  storage_account_name = azurerm_storage_account.cloud_benchmark.name
+  quota                = 50
+}
+
 # Service Bus Setup
 resource "azurerm_eventgrid_system_topic" "cloud_benchmark" {
   name                = "cloud-benchmark-system-topic"
@@ -46,8 +54,8 @@ resource "azurerm_servicebus_namespace" "cloud_benchmark" {
 }
 
 resource "azurerm_servicebus_topic" "cloud_benchmark" {
-  name         = "cloud-benchmark-servicebus-topic"
-  namespace_id = azurerm_servicebus_namespace.cloud_benchmark.id
+  name                = "cloud-benchmark-servicebus-topic"
+  namespace_id        = azurerm_servicebus_namespace.cloud_benchmark.id
   default_message_ttl = "PT5M"
 }
 
@@ -77,16 +85,7 @@ resource "azurerm_eventhub" "cloud_benchmark" {
   message_retention   = 1
 }
 
-# Container App Configuration
-
-resource "azurerm_container_registry" "acr" {
-  name                = "cloudbenchmarkregistry"
-  resource_group_name = azurerm_resource_group.cloud_benchmark.name
-  location            = azurerm_resource_group.cloud_benchmark.location
-  sku                 = "Premium"
-  admin_enabled       = true
-}
-
+# Metrics Config
 resource "azurerm_log_analytics_workspace" "cloud_benchmark" {
   name                = "cloud-benchmark-log-analytics-workspace"
   location            = azurerm_resource_group.cloud_benchmark.location
@@ -95,14 +94,7 @@ resource "azurerm_log_analytics_workspace" "cloud_benchmark" {
   retention_in_days   = 30
 }
 
-resource "azurerm_container_app_environment" "cloud_benchmark" {
-  name                       = "cloud-benchmark-container-app-environment"
-  location                   = azurerm_resource_group.cloud_benchmark.location
-  resource_group_name        = azurerm_resource_group.cloud_benchmark.name
-  log_analytics_workspace_id = azurerm_log_analytics_workspace.cloud_benchmark.id
-}
-
-
+# User Assigned Identity & Roles
 resource "azurerm_user_assigned_identity" "cloud_benchmark" {
   location            = azurerm_resource_group.cloud_benchmark.location
   name                = "cloud-benchmark-identity"
@@ -151,6 +143,32 @@ resource "azurerm_role_assignment" "cloud_benchmark_eventhub_receive" {
   scope                = azurerm_eventhub.cloud_benchmark.id
 }
 
+# Container App Config
+resource "azurerm_container_registry" "acr" {
+  name                = "cloudbenchmarkregistry"
+  resource_group_name = azurerm_resource_group.cloud_benchmark.name
+  location            = azurerm_resource_group.cloud_benchmark.location
+  sku                 = "Premium"
+  admin_enabled       = true
+}
+
+resource "azurerm_container_app_environment" "cloud_benchmark" {
+  name                       = "cloud-benchmark-container-app-environment"
+  location                   = azurerm_resource_group.cloud_benchmark.location
+  resource_group_name        = azurerm_resource_group.cloud_benchmark.name
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.cloud_benchmark.id
+}
+
+## Fileshare Storage
+resource "azurerm_container_app_environment_storage" "cloud_benchmark" {
+  name                         = "app-persistent-storage"
+  container_app_environment_id = azurerm_container_app_environment.cloud_benchmark.id
+  account_name                 = azurerm_storage_account.cloud_benchmark.name
+  share_name                   = azurerm_storage_share.cloud_benchmark.name
+  access_key                   = azurerm_storage_account.cloud_benchmark.primary_access_key
+  access_mode                  = "ReadWrite"
+}
+
 resource "azurerm_container_app" "cloud_benchmark_single_node" {
   count                        = var.run_single_node ? 1 : 0
   name                         = "cloud-benchmark-single-node"
@@ -169,6 +187,7 @@ resource "azurerm_container_app" "cloud_benchmark_single_node" {
     server   = "cloudbenchmarkregistry.azurecr.io"
     identity = azurerm_user_assigned_identity.cloud_benchmark.id
   }
+
 
   template {
     max_replicas = 1
@@ -202,12 +221,12 @@ resource "azurerm_container_app" "cloud_benchmark_single_node" {
       }
 
       env {
-        name = "XTDB_LOCAL_DISK_CACHE"
-        value = "/var/lib/xtdb/disk-cache-1"
+        name  = "XTDB_LOCAL_DISK_CACHE"
+        value = "/var/lib/xtdb/disk-cache/cache-1"
       }
 
       env {
-        name = "XTDB_AZURE_USER_MANAGED_IDENTITY_CLIENT_ID"
+        name  = "XTDB_AZURE_USER_MANAGED_IDENTITY_CLIENT_ID"
         value = azurerm_user_assigned_identity.cloud_benchmark.client_id
       }
 
@@ -232,12 +251,12 @@ resource "azurerm_container_app" "cloud_benchmark_single_node" {
       }
 
       env {
-        name = "XTDB_AZURE_EVENTHUB_NAMESPACE"
+        name  = "XTDB_AZURE_EVENTHUB_NAMESPACE"
         value = azurerm_eventhub_namespace.cloud_benchmark.name
       }
 
       env {
-        name = "XTDB_AZURE_EVENTHUB_NAME"
+        name  = "XTDB_AZURE_EVENTHUB_NAME"
         value = azurerm_eventhub.cloud_benchmark.name
       }
 
@@ -250,6 +269,17 @@ resource "azurerm_container_app" "cloud_benchmark_single_node" {
       #   name = "SLACK_WEBHOOK_URL"
       #   value = var.slack_webhook_url
       # }
+
+      volume_mounts {
+        name = "app-persistent-storage"
+        path = "/var/lib/xtdb"
+      }
+    }
+
+    volume {
+      name         = "app-persistent-storage"
+      storage_name = azurerm_container_app_environment_storage.cloud_benchmark.name
+      storage_type = "AzureFile"
     }
   }
 }
