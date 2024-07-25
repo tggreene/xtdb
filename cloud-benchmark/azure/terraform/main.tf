@@ -148,7 +148,7 @@ resource "azurerm_container_registry" "acr" {
   name                = "cloudbenchmarkregistry"
   resource_group_name = azurerm_resource_group.cloud_benchmark.name
   location            = azurerm_resource_group.cloud_benchmark.location
-  sku                 = "Premium"
+  sku                 = "Basic"
   admin_enabled       = true
 }
 
