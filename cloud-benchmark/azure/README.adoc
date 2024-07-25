@@ -124,10 +124,28 @@ This will print the last 100 lines of the logs, and then follow the logs as they
 
 == Clearing up resources
 
-To clear up the storage used by the XTDB node (ie, the contents of the blob storage), you can run the following script:
+Between runs it can be useful to entirely clear all of the persisted data from the Container App. This can be done in a few steps:
+
+=== Clearing up the Object Store
+
+To clear up _most_ of the storage used by the XTDB node, you can run the following script:
 
 ```
 ./scripts/clear-azure-storage.sh
 ```
 
-NOTE: This is currently required between runs when using remote object storage and Local Directory based logs.
+This will delete:
+
+* The Contents of the Azure Blob Storage container.
+
+=== Clearing up the File Share
+
+To clear up the file share contents (ie, which we mount to the app container and persist our local disk cache) is somewhat more complex within the CLI. I would recommend using the Azure Portal to do this:
+
+* Go to the Azure "Storage Browser" page.
+* Navigate to the storage account we use for azure auctionmark, `xtdbazurebenchmark`
+* Navigate to the "File Shares" section.
+* Go to `cloudbenchmarkshare`.
+* Delete the contents of the share.
+
+
