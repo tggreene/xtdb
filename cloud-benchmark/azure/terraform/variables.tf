@@ -14,6 +14,11 @@ variable "auctionmark_scale_factor" {
   type        = number
 }
 
+variable "eventhub_topic_suffix" {
+  description = "String to suffix the eventhub topic with - update whenever you want to create a new topic"
+  type        = string
+}
+
 variable "run_single_node" {
   description = "Whether to run a single node deployment"
   type        = bool

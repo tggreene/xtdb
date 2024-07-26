@@ -138,6 +138,12 @@ This will delete:
 
 * The Contents of the Azure Blob Storage container.
 
+=== Clearing eventhub
+
+We cannot clear the actual contents of Azure Event Hub very easily, but if we want to reset from a relatively clean state we should be able to "bump" the topic version within `main.tf` and reapply the terraform config. This will create a new Event Hub with a new name, and the old one will be deleted.
+
+To assist with this, I've added a variable to the `terraform.tfvars` file called `eventhub_topic_suffix`. This defaults to "v1", but you can update this whenever you need to reset the Event Hub.
+
 === Clearing up the File Share
 
 To clear up the file share contents (ie, which we mount to the app container and persist our local disk cache) is somewhat more complex within the CLI. I would recommend using the Azure Portal to do this:

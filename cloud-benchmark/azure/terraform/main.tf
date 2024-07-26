@@ -78,7 +78,7 @@ resource "azurerm_eventhub_namespace" "cloud_benchmark" {
 }
 
 resource "azurerm_eventhub" "cloud_benchmark" {
-  name                = "cloud-benchmark-eventhub-topic"
+  name                = "cloud-benchmark-eventhub-topic-${var.eventhub_topic_suffix}"
   namespace_name      = azurerm_eventhub_namespace.cloud_benchmark.name
   resource_group_name = azurerm_resource_group.cloud_benchmark.name
   partition_count     = 1
