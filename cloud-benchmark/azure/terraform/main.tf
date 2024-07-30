@@ -157,6 +157,13 @@ resource "azurerm_container_app_environment" "cloud_benchmark" {
   location                   = azurerm_resource_group.cloud_benchmark.location
   resource_group_name        = azurerm_resource_group.cloud_benchmark.name
   log_analytics_workspace_id = azurerm_log_analytics_workspace.cloud_benchmark.id
+
+  workload_profile {
+    name = "benchmark"
+    workload_profile_type = "D8"
+    maximum_count = 8
+    minimum_count = 1
+  }
 }
 
 ## Fileshare Storage
@@ -288,3 +295,282 @@ resource "azurerm_container_app" "cloud_benchmark_single_node" {
 # from the above. Generally speaking, similar to how I'd handle in kubernetes:
 # - InitContainer that runs first which ONLY runs load phase (ie, AUCTIONMARK_LOAD_PHASE_ONLY = true)
 # - Can run a number of parallel containers that point to different local disk cache paths
+
+resource "azurerm_container_app" "cloud_benchmark_multi_node" {
+  count                        = var.run_multi_node ? 1 : 0
+  name                         = "cloud-benchmark-multi-node"
+  resource_group_name          = azurerm_resource_group.cloud_benchmark.name
+  container_app_environment_id = azurerm_container_app_environment.cloud_benchmark.id
+  workload_profile_name        = "benchmark"  
+  revision_mode                = "Single"
+
+  identity {
+    type = "UserAssigned"
+    identity_ids = [
+      azurerm_user_assigned_identity.cloud_benchmark.id
+    ]
+  }
+
+  registry {
+    server   = "cloudbenchmarkregistry.azurecr.io"
+    identity = azurerm_user_assigned_identity.cloud_benchmark.id
+  }
+
+  template {
+
+    container {
+      image = "cloudbenchmarkregistry.azurecr.io/xtdb-azure-bench:latest"
+      name  = "cloud-benchmark-1"
+
+      cpu    = 2
+      memory = "4Gi"
+
+      env {
+        name  = "AUCTIONMARK_DURATION"
+        value = var.auctionmark_duration
+      }
+
+      env {
+        name  = "AUCTIONMARK_SCALE_FACTOR"
+        value = var.auctionmark_scale_factor
+      }
+
+      env {
+        name  = "AUCTIONMARK_LOAD_PHASE"
+        value = true
+      }
+
+      env {
+        name  = "AUCTIONMARK_LOAD_PHASE_ONLY"
+        value = false
+      }
+
+      env {
+        name  = "XTDB_LOCAL_DISK_CACHE"
+        value = "/var/lib/xtdb/disk-cache/cache-1"
+      }
+
+      env {
+        name  = "XTDB_AZURE_USER_MANAGED_IDENTITY_CLIENT_ID"
+        value = azurerm_user_assigned_identity.cloud_benchmark.client_id
+      }
+
+      env {
+        name  = "XTDB_AZURE_STORAGE_ACCOUNT"
+        value = azurerm_storage_account.cloud_benchmark.name
+      }
+
+      env {
+        name  = "XTDB_AZURE_STORAGE_CONTAINER"
+        value = azurerm_storage_container.cloud_benchmark.name
+      }
+
+      env {
+        name  = "XTDB_AZURE_SERVICE_BUS_NAMESPACE"
+        value = azurerm_servicebus_namespace.cloud_benchmark.name
+      }
+
+      env {
+        name  = "XTDB_AZURE_SERVICE_BUS_TOPIC_NAME"
+        value = azurerm_servicebus_topic.cloud_benchmark.name
+      }
+
+      env {
+        name  = "XTDB_AZURE_EVENTHUB_NAMESPACE"
+        value = azurerm_eventhub_namespace.cloud_benchmark.name
+      }
+
+      env {
+        name  = "XTDB_AZURE_EVENTHUB_NAME"
+        value = azurerm_eventhub.cloud_benchmark.name
+      }
+
+      env {
+        name  = "CLOUD_PLATFORM_NAME"
+        value = "Azure"
+      }
+
+      # env {
+      #   name = "SLACK_WEBHOOK_URL"
+      #   value = var.slack_webhook_url
+      # }
+
+      volume_mounts {
+        name = "app-persistent-storage"
+        path = "/var/lib/xtdb"
+      }
+    }
+
+    container {
+      image = "cloudbenchmarkregistry.azurecr.io/xtdb-azure-bench:latest"
+      name  = "cloud-benchmark-2"
+
+      cpu    = 2
+      memory = "4Gi"
+
+      env {
+        name  = "AUCTIONMARK_DURATION"
+        value = var.auctionmark_duration
+      }
+
+      env {
+        name  = "AUCTIONMARK_SCALE_FACTOR"
+        value = var.auctionmark_scale_factor
+      }
+
+      env {
+        name  = "AUCTIONMARK_LOAD_PHASE"
+        value = false
+      }
+
+      env {
+        name  = "AUCTIONMARK_LOAD_PHASE_ONLY"
+        value = false
+      }
+
+      env {
+        name  = "XTDB_LOCAL_DISK_CACHE"
+        value = "/var/lib/xtdb/disk-cache/cache-2"
+      }
+
+      env {
+        name  = "XTDB_AZURE_USER_MANAGED_IDENTITY_CLIENT_ID"
+        value = azurerm_user_assigned_identity.cloud_benchmark.client_id
+      }
+
+      env {
+        name  = "XTDB_AZURE_STORAGE_ACCOUNT"
+        value = azurerm_storage_account.cloud_benchmark.name
+      }
+
+      env {
+        name  = "XTDB_AZURE_STORAGE_CONTAINER"
+        value = azurerm_storage_container.cloud_benchmark.name
+      }
+
+      env {
+        name  = "XTDB_AZURE_SERVICE_BUS_NAMESPACE"
+        value = azurerm_servicebus_namespace.cloud_benchmark.name
+      }
+
+      env {
+        name  = "XTDB_AZURE_SERVICE_BUS_TOPIC_NAME"
+        value = azurerm_servicebus_topic.cloud_benchmark.name
+      }
+
+      env {
+        name  = "XTDB_AZURE_EVENTHUB_NAMESPACE"
+        value = azurerm_eventhub_namespace.cloud_benchmark.name
+      }
+
+      env {
+        name  = "XTDB_AZURE_EVENTHUB_NAME"
+        value = azurerm_eventhub.cloud_benchmark.name
+      }
+
+      env {
+        name  = "CLOUD_PLATFORM_NAME"
+        value = "Azure"
+      }
+
+      # env {
+      #   name = "SLACK_WEBHOOK_URL"
+      #   value = var.slack_webhook_url
+      # }
+
+      volume_mounts {
+        name = "app-persistent-storage"
+        path = "/var/lib/xtdb"
+      }
+    }
+
+    container {
+      image = "cloudbenchmarkregistry.azurecr.io/xtdb-azure-bench:latest"
+      name  = "cloud-benchmark-3"
+
+      cpu    = 2
+      memory = "4Gi"
+
+      env {
+        name  = "AUCTIONMARK_DURATION"
+        value = var.auctionmark_duration
+      }
+
+      env {
+        name  = "AUCTIONMARK_SCALE_FACTOR"
+        value = var.auctionmark_scale_factor
+      }
+
+      env {
+        name  = "AUCTIONMARK_LOAD_PHASE"
+        value = false
+      }
+
+      env {
+        name  = "AUCTIONMARK_LOAD_PHASE_ONLY"
+        value = false
+      }
+
+      env {
+        name  = "XTDB_LOCAL_DISK_CACHE"
+        value = "/var/lib/xtdb/disk-cache/cache-3"
+      }
+
+      env {
+        name  = "XTDB_AZURE_USER_MANAGED_IDENTITY_CLIENT_ID"
+        value = azurerm_user_assigned_identity.cloud_benchmark.client_id
+      }
+
+      env {
+        name  = "XTDB_AZURE_STORAGE_ACCOUNT"
+        value = azurerm_storage_account.cloud_benchmark.name
+      }
+
+      env {
+        name  = "XTDB_AZURE_STORAGE_CONTAINER"
+        value = azurerm_storage_container.cloud_benchmark.name
+      }
+
+      env {
+        name  = "XTDB_AZURE_SERVICE_BUS_NAMESPACE"
+        value = azurerm_servicebus_namespace.cloud_benchmark.name
+      }
+
+      env {
+        name  = "XTDB_AZURE_SERVICE_BUS_TOPIC_NAME"
+        value = azurerm_servicebus_topic.cloud_benchmark.name
+      }
+
+      env {
+        name  = "XTDB_AZURE_EVENTHUB_NAMESPACE"
+        value = azurerm_eventhub_namespace.cloud_benchmark.name
+      }
+
+      env {
+        name  = "XTDB_AZURE_EVENTHUB_NAME"
+        value = azurerm_eventhub.cloud_benchmark.name
+      }
+
+      env {
+        name  = "CLOUD_PLATFORM_NAME"
+        value = "Azure"
+      }
+
+      # env {
+      #   name = "SLACK_WEBHOOK_URL"
+      #   value = var.slack_webhook_url
+      # }
+
+      volume_mounts {
+        name = "app-persistent-storage"
+        path = "/var/lib/xtdb"
+      }
+    }
+
+    volume {
+      name         = "app-persistent-storage"
+      storage_name = azurerm_container_app_environment_storage.cloud_benchmark.name
+      storage_type = "AzureFile"
+    }
+  }
+}

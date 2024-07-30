@@ -23,3 +23,8 @@ variable "run_single_node" {
   description = "Whether to run a single node deployment"
   type        = bool
 }
+
+variable "run_multi_node" {
+  description = "Whether to run a multi node deployment"
+  type        = bool
+}
