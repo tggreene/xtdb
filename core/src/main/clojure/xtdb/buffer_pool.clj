@@ -419,10 +419,16 @@
                                      (or fut (CompletableFuture/completedFuture {:pinned? false}))
                                      (util/then-apply
                                       (fn [{:keys [pinned?]}]
-                                        (log/tracef "Writing arrow file, %s, to local disk cache" k) 
-                                        (util/create-parents buffer-cache-path)
-                                        ;; see #2847
-                                        (util/atomic-move tmp-path buffer-cache-path)
+                                        ;; If path exists in local disk cache - delete the tmp file - shouldnt attempt to write/move anything
+                                        ;; Else - move the tmp file to the local disk cache
+                                        (if (util/path-exists buffer-cache-path)
+                                          (do
+                                            (log/debugf "Arrow file, %s, already exists on local disk cache - clearing temp file" k)
+                                            (util/delete-file tmp-path))
+                                          (do
+                                            (log/tracef "Writing arrow file, %s, to local disk cache" k)
+                                            (util/create-parents buffer-cache-path)
+                                            (util/atomic-move tmp-path buffer-cache-path)))
                                         {:pinned? pinned? :file-size (util/size-on-disk buffer-cache-path)})))))))
 
           (close [_]
@@ -456,10 +462,16 @@
                                                    (or fut (CompletableFuture/completedFuture {:pinned? false}))
                                                    (util/then-apply
                                                     (fn [{:keys [pinned?]}]
-                                                      (log/tracef "Writing multipart file %s, to local disk cache" k)
-                                                      (util/create-parents buffer-cache-path)
-                                                      ;; see #2847
-                                                      (util/atomic-move tmp-path buffer-cache-path)
+                                                      ;; If path exists in local disk cache - delete the tmp file - shouldnt attempt to write/move anything
+                                                      ;; Else - move the tmp file to the local disk cache
+                                                      (if (util/path-exists buffer-cache-path)
+                                                        (do
+                                                          (log/debugf "Multipart file, %s, already exists on local disk cache - clearing temp file" k)
+                                                          (util/delete-file tmp-path))
+                                                        (do
+                                                          (log/tracef "Writing multipart file, %s, to local disk cache" k)
+                                                          (util/create-parents buffer-cache-path)
+                                                          (util/atomic-move tmp-path buffer-cache-path)))
                                                       {:pinned? pinned? :file-size (util/size-on-disk buffer-cache-path)})))))))))))))
 
   EvictBufferTest
