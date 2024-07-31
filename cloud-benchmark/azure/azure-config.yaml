@@ -3,10 +3,10 @@ txLog: !Kafka
   bootstrapServers: !Env KAFKA_BOOTSTRAP_SERVERS
   topicName: !Env XTDB_TOPIC_NAME
   propertiesMap:
+    compression.type: none
     security.protocol: SASL_SSL
-    sasl.mechanism: OAUTHBEARER
-    sasl.jaas.config: org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule required;
-    sasl.login.callback.handler.class: CustomAuthenticateCallbackHandler
+    sasl.mechanism: PLAIN
+    sasl.jaas.config: org.apache.kafka.common.security.plain.PlainLoginModule required username="$ConnectionString" password="";    
 
 # txLog: !Azure
 #   namespace: !Env XTDB_AZURE_EVENTHUB_NAMESPACE
