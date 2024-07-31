@@ -282,10 +282,10 @@ resource "azurerm_container_app" "cloud_benchmark_single_node" {
         value = "Azure"
       }
 
-      # env {
-      #   name = "SLACK_WEBHOOK_URL"
-      #   value = var.slack_webhook_url
-      # }
+      env {
+        name = "SLACK_WEBHOOK_URL"
+        value = var.slack_webhook_url
+      }
 
       volume_mounts {
         name = "app-persistent-storage"
@@ -396,14 +396,24 @@ resource "azurerm_container_app" "cloud_benchmark_multi_node" {
       }
 
       env {
+        name  = "KAFKA_BOOTSTRAP_SERVERS"
+        value = "${azurerm_eventhub_namespace.cloud_benchmark.name}.servicebus.windows.net:9093"
+      }
+
+      env {
+        name  = "XTDB_TOPIC_NAME"
+        value = azurerm_eventhub.cloud_benchmark.name
+      }
+
+      env {
         name  = "CLOUD_PLATFORM_NAME"
         value = "Azure"
       }
 
-      # env {
-      #   name = "SLACK_WEBHOOK_URL"
-      #   value = var.slack_webhook_url
-      # }
+      env {
+        name = "SLACK_WEBHOOK_URL"
+        value = var.slack_webhook_url
+      }
 
       volume_mounts {
         name = "app-persistent-storage"
@@ -479,14 +489,24 @@ resource "azurerm_container_app" "cloud_benchmark_multi_node" {
       }
 
       env {
+        name  = "KAFKA_BOOTSTRAP_SERVERS"
+        value = "${azurerm_eventhub_namespace.cloud_benchmark.name}.servicebus.windows.net:9093"
+      }
+
+      env {
+        name  = "XTDB_TOPIC_NAME"
+        value = azurerm_eventhub.cloud_benchmark.name
+      }
+
+      env {
         name  = "CLOUD_PLATFORM_NAME"
         value = "Azure"
       }
 
-      # env {
-      #   name = "SLACK_WEBHOOK_URL"
-      #   value = var.slack_webhook_url
-      # }
+      env {
+        name = "SLACK_WEBHOOK_URL"
+        value = var.slack_webhook_url
+      }
 
       volume_mounts {
         name = "app-persistent-storage"
@@ -562,14 +582,24 @@ resource "azurerm_container_app" "cloud_benchmark_multi_node" {
       }
 
       env {
+        name  = "KAFKA_BOOTSTRAP_SERVERS"
+        value = "${azurerm_eventhub_namespace.cloud_benchmark.name}.servicebus.windows.net:9093"
+      }
+
+      env {
+        name  = "XTDB_TOPIC_NAME"
+        value = azurerm_eventhub.cloud_benchmark.name
+      }
+
+      env {
         name  = "CLOUD_PLATFORM_NAME"
         value = "Azure"
       }
 
-      # env {
-      #   name = "SLACK_WEBHOOK_URL"
-      #   value = var.slack_webhook_url
-      # }
+      env {
+        name = "SLACK_WEBHOOK_URL"
+        value = var.slack_webhook_url
+      }
 
       volume_mounts {
         name = "app-persistent-storage"
