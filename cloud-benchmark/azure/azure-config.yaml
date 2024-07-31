@@ -1,14 +1,19 @@
 # CONFIG FOR RUNNING WITH AZURE INFRA
-# txLog: !Kafka
-#   bootstrapServers: !Env KAFKA_BOOTSTRAP_SERVERS
-#   topicName: !Env XTDB_TOPIC_NAME
+txLog: !Kafka
+  bootstrapServers: !Env KAFKA_BOOTSTRAP_SERVERS
+  topicName: !Env XTDB_TOPIC_NAME
+  propertiesMap:
+    security.protocol: SASL_SSL
+    sasl.mechanism: OAUTHBEARER
+    sasl.jaas.config: org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule required;
+    sasl.login.callback.handler.class: CustomAuthenticateCallbackHandler
 
-txLog: !Azure
-  namespace: !Env XTDB_AZURE_EVENTHUB_NAMESPACE
-  eventHubName: !Env XTDB_AZURE_EVENTHUB_NAME
-  maxWaitTime: PT5S
-  pollSleepDuration: PT1S
-  userManagedIdentityClientId: !Env XTDB_AZURE_USER_MANAGED_IDENTITY_CLIENT_ID
+# txLog: !Azure
+#   namespace: !Env XTDB_AZURE_EVENTHUB_NAMESPACE
+#   eventHubName: !Env XTDB_AZURE_EVENTHUB_NAME
+#   maxWaitTime: PT5S
+#   pollSleepDuration: PT1S
+#   userManagedIdentityClientId: !Env XTDB_AZURE_USER_MANAGED_IDENTITY_CLIENT_ID
 
 storage: !Remote
   objectStore: !Azure

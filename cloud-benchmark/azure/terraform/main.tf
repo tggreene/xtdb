@@ -85,6 +85,16 @@ resource "azurerm_eventhub" "cloud_benchmark" {
   message_retention   = 7
 }
 
+resource "azurerm_eventhub_authorization_rule" "cloud_benchmark" {
+  name                = "cloud-benchmark-eventhub-auth"
+  namespace_name      = azurerm_eventhub_namespace.cloud_benchmark.name
+  eventhub_name       = azurerm_eventhub.cloud_benchmark.name
+  resource_group_name = azurerm_resource_group.cloud_benchmark.name
+  listen              = true
+  send                = true
+  manage              = true
+}
+
 # Metrics Config
 resource "azurerm_log_analytics_workspace" "cloud_benchmark" {
   name                = "cloud-benchmark-log-analytics-workspace"
@@ -258,12 +268,12 @@ resource "azurerm_container_app" "cloud_benchmark_single_node" {
       }
 
       env {
-        name  = "XTDB_AZURE_EVENTHUB_NAMESPACE"
-        value = azurerm_eventhub_namespace.cloud_benchmark.name
+        name  = "KAFKA_BOOTSTRAP_SERVERS"
+        value = "${azurerm_eventhub_namespace.cloud_benchmark.name}.servicebus.windows.net:9093"
       }
 
       env {
-        name  = "XTDB_AZURE_EVENTHUB_NAME"
+        name  = "XTDB_TOPIC_NAME"
         value = azurerm_eventhub.cloud_benchmark.name
       }
 
