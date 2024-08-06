@@ -186,6 +186,18 @@ resource "azurerm_container_app_environment_storage" "cloud_benchmark" {
   access_mode                  = "ReadWrite"
 }
 
+## Single-node App Insights
+##
+## Required for application metrics
+resource "azurerm_application_insights" "cloud_benchmark_single_node" {
+  # count                        = var.run_single_node ? 1 : 0
+  name                         = "cloud-benchmark-single-node"
+  resource_group_name          = azurerm_resource_group.cloud_benchmark.name
+  location                     = azurerm_resource_group.cloud_benchmark.location
+  application_type             = "web"
+}
+
+## Single-node Container App
 resource "azurerm_container_app" "cloud_benchmark_single_node" {
   count                        = var.run_single_node ? 1 : 0
   name                         = "cloud-benchmark-single-node"
@@ -278,6 +290,11 @@ resource "azurerm_container_app" "cloud_benchmark_single_node" {
       }
 
       env {
+        name  = "XTDB_AZURE_INSTRUMENTATION_KEY"
+        value = azurerm_application_insights.cloud_benchmark_single_node.instrumentation_key
+      }
+
+      env {
         name  = "CLOUD_PLATFORM_NAME"
         value = "Azure"
       }
@@ -301,11 +318,19 @@ resource "azurerm_container_app" "cloud_benchmark_single_node" {
   }
 }
 
-# TODO: Multi node config could probably be added here - taking inspiration 
-# from the above. Generally speaking, similar to how I'd handle in kubernetes:
-# - InitContainer that runs first which ONLY runs load phase (ie, AUCTIONMARK_LOAD_PHASE_ONLY = true)
-# - Can run a number of parallel containers that point to different local disk cache paths
 
+## Multi-node App Insights
+##
+## Required for application metrics
+resource "azurerm_application_insights" "cloud_benchmark_multi_node" {
+  # count                        = var.run_single_node ? 1 : 0
+  name                         = "cloud-benchmark-multi-node"
+  resource_group_name          = azurerm_resource_group.cloud_benchmark.name
+  location                     = azurerm_resource_group.cloud_benchmark.location
+  application_type             = "web"
+}
+
+## Multi-node Container App
 resource "azurerm_container_app" "cloud_benchmark_multi_node" {
   count                        = var.run_multi_node ? 1 : 0
   name                         = "cloud-benchmark-multi-node"
@@ -406,6 +431,11 @@ resource "azurerm_container_app" "cloud_benchmark_multi_node" {
       }
 
       env {
+        name  = "XTDB_AZURE_INSTRUMENTATION_KEY"
+        value = azurerm_application_insights.cloud_benchmark_multi_node.instrumentation_key
+      }
+
+      env {
         name  = "CLOUD_PLATFORM_NAME"
         value = "Azure"
       }
@@ -499,6 +529,11 @@ resource "azurerm_container_app" "cloud_benchmark_multi_node" {
       }
 
       env {
+        name  = "XTDB_AZURE_INSTRUMENTATION_KEY"
+        value = azurerm_application_insights.cloud_benchmark_multi_node.instrumentation_key
+      }
+
+      env {
         name  = "CLOUD_PLATFORM_NAME"
         value = "Azure"
       }
@@ -589,6 +624,11 @@ resource "azurerm_container_app" "cloud_benchmark_multi_node" {
       env {
         name  = "XTDB_TOPIC_NAME"
         value = azurerm_eventhub.cloud_benchmark.name
+      }
+
+      env {
+        name  = "XTDB_AZURE_INSTRUMENTATION_KEY"
+        value = azurerm_application_insights.cloud_benchmark_multi_node.instrumentation_key
       }
 
       env {
