@@ -1,6 +1,7 @@
 (ns xtdb.util
   (:refer-clojure :exclude [with-open])
-  (:require [clojure.math :as math]
+  (:require [again.core :as again]
+            [clojure.math :as math]
             [clojure.java.io :as io]
             [clojure.spec.alpha :as s]
             [clojure.string :as str]
@@ -211,11 +212,24 @@
 
 (def write-truncate-open-opts #{:create :write :truncate-existing})
 
+(defn -file-channel-open
+  [^Path path open-opts]
+  (FileChannel/open path open-opts))
+
 (defn ->file-channel
   (^java.nio.channels.FileChannel [^Path path]
    (->file-channel path #{:read}))
   (^java.nio.channels.FileChannel [^Path path open-opts]
-   (FileChannel/open path (into-array OpenOption (map #(standard-open-options % %) open-opts)))))
+   (again/with-retries 
+     {::again/callback (fn [{::again/keys [attempts status exception]}]
+                         ;; Retry only if the exception is due to temporary resource unavailability
+                         ;; return fail i.e. stop for all other exceptions, max of 3 retries
+                         (when (or (<= 3 attempts)
+                                   (and (= status :retry)
+                                        (not (str/includes? (.getMessage exception) "Resource temporarily unavailable"))))
+                           ::again/fail))
+      ::again/strategy [50 100 150]}
+     (-file-channel-open path (into-array OpenOption (map #(standard-open-options % %) open-opts))))))
 
 (defn ->mmap-path
   (^java.nio.MappedByteBuffer [^Path path]

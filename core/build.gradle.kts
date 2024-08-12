@@ -48,6 +48,8 @@ dependencies {
 
     api("com.github.ben-manes.caffeine", "caffeine", "3.1.8")
 
+    api("listora", "again", "1.0.0")
+
     // monitoring
     api("io.micrometer", "micrometer-core", "1.12.2")
     api("io.micrometer", "micrometer-registry-prometheus", "1.12.2")
