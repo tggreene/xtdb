@@ -1,12 +1,15 @@
 # CONFIG FOR RUNNING WITH AZURE INFRA
-txLog: !Kafka
-  bootstrapServers: !Env KAFKA_BOOTSTRAP_SERVERS
-  topicName: !Env XTDB_TOPIC_NAME
-  propertiesMap:
-    compression.type: none
-    security.protocol: SASL_SSL
-    sasl.mechanism: PLAIN
-    sasl.jaas.config: org.apache.kafka.common.security.plain.PlainLoginModule required username="$ConnectionString" password="";    
+txLog: !Local
+  path: /var/lib/xtdb/log
+
+# txLog: !Kafka
+#   bootstrapServers: !Env KAFKA_BOOTSTRAP_SERVERS
+#   topicName: !Env XTDB_TOPIC_NAME
+#   propertiesMap:
+#     compression.type: none
+#     security.protocol: SASL_SSL
+#     sasl.mechanism: PLAIN
+#     sasl.jaas.config: org.apache.kafka.common.security.plain.PlainLoginModule required username="$ConnectionString" password="";    
 
 # txLog: !Azure
 #   namespace: !Env XTDB_AZURE_EVENTHUB_NAMESPACE
