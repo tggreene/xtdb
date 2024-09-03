@@ -4,10 +4,6 @@ txLog: !Kafka
   txTopic: !Env XTDB_TX_TOPIC
   filesTopic: !Env XTDB_FILES_TOPIC
 
-
-# txLog: !Local
-#   path: !Env XTDB_LOCAL_LOG_PATH
-
 storage: !Remote
   objectStore: !Azure
     storageAccount: !Env XTDB_AZURE_STORAGE_ACCOUNT
@@ -16,6 +12,3 @@ storage: !Remote
     userManagedIdentityClientId: !Env XTDB_AZURE_USER_MANAGED_IDENTITY_CLIENT_ID
   localDiskCache: !Env XTDB_LOCAL_DISK_CACHE
   maxDiskCachePercentage: 25
-
-metrics: !AzureMonitor
-  instrumentationKey: !Env XTDB_AZURE_INSTRUMENTATION_KEY

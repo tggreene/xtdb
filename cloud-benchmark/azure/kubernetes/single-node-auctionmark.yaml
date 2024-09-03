@@ -84,7 +84,7 @@ spec:
             claimName: "xtdb-pvc-local-caches"
       containers:
       - name: "xtdb-azure-bench-1"
-        image: "cloudbenchmarkregistry.azurecr.io/xtdb-azure-bench:latest"
+        image: cloudbenchmarkregistry.azurecr.io/xtdb-azure-bench-yourkit-local-txlog:latest
         volumeMounts:
         - mountPath: "/var/lib/xtdb/log"
           name: "xtdb-pvc-log-vol"
@@ -92,9 +92,11 @@ spec:
           name: "xtdb-pvc-local-caches-vol"
         resources:
           requests:
-            memory: "4056Mi"
+            memory: "8096Mi"
           limits:
-            memory: "4056Mi"
+            memory: "8096Mi"
+        ports:
+        - containerPort: 10001 # YourKit Profiler port
         envFrom:
         - configMapRef:
             name: "xtdb-env-config"

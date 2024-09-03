@@ -23,8 +23,10 @@ data:
   XTDB_AZURE_STORAGE_CONTAINER: "xtdbazurebenchmarkcontainer"
   XTDB_AZURE_SERVICE_BUS_NAMESPACE: "cloud-benchmark-eventbus"
   XTDB_AZURE_SERVICE_BUS_TOPIC_NAME: "cloud-benchmark-servicebus-topic"
+  XTDB_AZURE_INSTRUMENTATION_KEY: "ab310650-9d89-44a3-8deb-7f2e41886443"
   KAFKA_BOOTSTRAP_SERVERS: "kafka-service.cloud-benchmark.svc.cluster.local:9092"
-  XTDB_TOPIC_NAME: "xtdb-topic"
+  XTDB_TX_TOPIC: "xtdb-tx-topic"
+  XTDB_FILES_TOPIC: "xtdb-files-topic"
   AUCTIONMARK_DURATION: "PT1H"
   AUCTIONMARK_SCALE_FACTOR: "0.1"
 ---
@@ -62,24 +64,26 @@ spec:
             memory: "256Mi"
           limits:
             memory: "256Mi"
-      - name: load-phase
-        image: cloudbenchmarkregistry.azurecr.io/xtdb-azure-bench:latest
-        volumeMounts:
-        - mountPath: /var/lib/xtdb/buffers
-          name: xtdb-pvc-local-caches-vol
-        resources:
-          requests:
-            memory: "5120Mi"
-          limits:
-            memory: "5120Mi"
-        envFrom:
-        - configMapRef:
-            name: xtdb-env-config
-        env:
-        - name: XTDB_LOCAL_DISK_CACHE
-          value: "/var/lib/xtdb/buffers/disk-cache-lp"
-        - name: AUCTIONMARK_LOAD_PHASE_ONLY
-          value: "True"
+      # - name: load-phase
+      #   image: cloudbenchmarkregistry.azurecr.io/xtdb-azure-bench:latest
+      #   volumeMounts:
+      #   - mountPath: /var/lib/xtdb/buffers
+      #     name: xtdb-pvc-local-caches-vol
+      #   resources:
+      #     requests:
+      #       memory: "5120Mi"
+      #     limits:
+      #       memory: "5120Mi"
+      #   envFrom:
+      #   - configMapRef:
+      #       name: xtdb-env-config
+      #   env:
+      #   - name: XTDB_LOCAL_DISK_CACHE
+      #     value: "/var/lib/xtdb/buffers/disk-cache-lp"
+      #   - name: AUCTIONMARK_LOAD_PHASE_ONLY
+      #     value: "True"
+      #   - name: XTDB_LOCAL_LOG_PATH
+      #     value: "/var/lib/xtdb/log/local-log-0"
       containers:
       - name: xtdb-azure-bench-1
         image: cloudbenchmarkregistry.azurecr.io/xtdb-azure-bench:latest
@@ -99,6 +103,10 @@ spec:
           value: "/var/lib/xtdb/buffers/disk-cache-1"
         - name: AUCTIONMARK_LOAD_PHASE
           value: "False"
+        - name: XTDB_LOCAL_LOG_PATH
+          value: "/var/lib/xtdb/log/local-log-1"
+        ports:
+        - containerPort: 10001 # YourKit Profiler port
       - name: xtdb-azure-bench-2
         image: cloudbenchmarkregistry.azurecr.io/xtdb-azure-bench:latest
         volumeMounts:
@@ -117,6 +125,8 @@ spec:
           value: "/var/lib/xtdb/buffers/disk-cache-2"
         - name: AUCTIONMARK_LOAD_PHASE
           value: "False"
+        - name: XTDB_LOCAL_LOG_PATH
+          value: "/var/lib/xtdb/log/local-log-2"
       - name: xtdb-azure-bench-3
         image: cloudbenchmarkregistry.azurecr.io/xtdb-azure-bench:latest
         volumeMounts:
@@ -135,3 +145,5 @@ spec:
           value: "/var/lib/xtdb/buffers/disk-cache-3"
         - name: AUCTIONMARK_LOAD_PHASE
           value: "False"
+        - name: XTDB_LOCAL_LOG_PATH
+          value: "/var/lib/xtdb/log/local-log-3"
