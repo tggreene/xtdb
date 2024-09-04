@@ -64,26 +64,28 @@ spec:
             memory: "256Mi"
           limits:
             memory: "256Mi"
-      # - name: load-phase
-      #   image: cloudbenchmarkregistry.azurecr.io/xtdb-azure-bench:latest
-      #   volumeMounts:
-      #   - mountPath: /var/lib/xtdb/buffers
-      #     name: xtdb-pvc-local-caches-vol
-      #   resources:
-      #     requests:
-      #       memory: "5120Mi"
-      #     limits:
-      #       memory: "5120Mi"
-      #   envFrom:
-      #   - configMapRef:
-      #       name: xtdb-env-config
-      #   env:
-      #   - name: XTDB_LOCAL_DISK_CACHE
-      #     value: "/var/lib/xtdb/buffers/disk-cache-lp"
-      #   - name: AUCTIONMARK_LOAD_PHASE_ONLY
-      #     value: "True"
-      #   - name: XTDB_LOCAL_LOG_PATH
-      #     value: "/var/lib/xtdb/log/local-log-0"
+      - name: load-phase
+        image: cloudbenchmarkregistry.azurecr.io/xtdb-azure-bench:latest
+        volumeMounts:
+        - mountPath: /var/lib/xtdb/buffers
+          name: xtdb-pvc-local-caches-vol
+        resources:
+          requests:
+            memory: "5120Mi"
+          limits:
+            memory: "5120Mi"
+        envFrom:
+        - configMapRef:
+            name: xtdb-env-config
+        env:
+        - name: XTDB_LOCAL_DISK_CACHE
+          value: "/var/lib/xtdb/buffers/disk-cache-lp"
+        - name: AUCTIONMARK_LOAD_PHASE_ONLY
+          value: "True"
+        - name: XTDB_LOCAL_LOG_PATH
+          value: "/var/lib/xtdb/log/local-log-0"
+        ports:
+        - containerPort: 10001 # YourKit Profiler port
       containers:
       - name: xtdb-azure-bench-1
         image: cloudbenchmarkregistry.azurecr.io/xtdb-azure-bench:latest
