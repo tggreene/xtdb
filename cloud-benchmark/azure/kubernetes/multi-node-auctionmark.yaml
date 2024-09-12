@@ -84,8 +84,8 @@ spec:
           value: "True"
         - name: XTDB_LOCAL_LOG_PATH
           value: "/var/lib/xtdb/log/local-log-0"
-        ports:
-        - containerPort: 10001 # YourKit Profiler port
+        # ports:
+        # - containerPort: 10001 # YourKit Profiler port
       containers:
       - name: xtdb-azure-bench-1
         image: cloudbenchmarkregistry.azurecr.io/xtdb-azure-bench:latest
@@ -107,8 +107,8 @@ spec:
           value: "False"
         - name: XTDB_LOCAL_LOG_PATH
           value: "/var/lib/xtdb/log/local-log-1"
-        ports:
-        - containerPort: 10001 # YourKit Profiler port
+        # ports:
+        # - containerPort: 10001 # YourKit Profiler port
       - name: xtdb-azure-bench-2
         image: cloudbenchmarkregistry.azurecr.io/xtdb-azure-bench:latest
         volumeMounts:
