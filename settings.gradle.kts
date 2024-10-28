@@ -20,7 +20,7 @@ include("lang:test-harness")
 project(":lang:test-harness").name = "test-harness"
 
 include("docker:standalone","docker:aws", "docker:azure")
-include("cloud-benchmark", "cloud-benchmark:aws", "cloud-benchmark:azure", "cloud-benchmark:google-cloud", "cloud-benchmark:local")
+include("cloud-benchmark", "cloud-benchmark:aws", "cloud-benchmark:azure", "cloud-benchmark:google-cloud", "cloud-benchmark:local", "cloud-benchmark:local-oom")
 
 include("modules:kafka", "modules:kafka-connect", "modules:aws", "modules:azure", "modules:google-cloud")
 project(":modules:kafka").name = "xtdb-kafka"

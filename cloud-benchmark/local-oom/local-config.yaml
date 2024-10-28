@@ -1,0 +1,19 @@
+# Use any available port for PGWire Server.
+server: 
+  port: 0
+
+txLog: !Kafka
+  bootstrapServers: !Env KAFKA_BOOTSTRAP_SERVERS
+  txTopic: !Env XTDB_TX_TOPIC
+  filesTopic: !Env XTDB_FILES_TOPIC
+
+storage: !Remote
+  objectStore: !Azure
+    storageAccount: !Env XTDB_AZURE_STORAGE_ACCOUNT
+    container: !Env XTDB_AZURE_STORAGE_CONTAINER
+    prefix: "xtdb-object-store"
+  localDiskCache: !Env XTDB_LOCAL_DISK_CACHE
+  maxDiskCachePercentage: 25
+
+metrics: !Prometheus
+  port: 0
