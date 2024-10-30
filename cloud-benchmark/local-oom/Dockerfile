@@ -33,6 +33,9 @@ ENTRYPOINT ["java", \
     "-Xmx2000m", "-Xms2000m", \
     "-XX:MaxDirectMemorySize=2000m", \
     "-XX:MaxMetaspaceSize=500m", \
+    "-XX:NativeMemoryTracking=summary", \
+    "-XX:+UnlockDiagnosticVMOptions", \
+    "-XX:+PrintNMTStatistics", \
     "-XX:+HeapDumpOnOutOfMemoryError", \
     "-XX:HeapDumpPath=/var/lib/xtdb/heapdump", \
     # UNCOMMENT BELOW If you want to run a Yourkit agent for Remote Profiling

@@ -31,6 +31,40 @@ data:
   AZURE_CLIENT_SECRET: ""
   AZURE_SUBSCRIPTION_ID: ""
 ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: xtdb-service
+  namespace: xtdb-benchmark
+  labels:
+    app: "xtdb-multi-node-auctionmark"
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 3000
+      name: http
+    - port: 5432
+      name: pgwire
+  selector:
+    app: "xtdb-multi-node-auctionmark"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: xtdb-prometheus
+  namespace: xtdb-benchmark
+  labels:
+    app: "xtdb-multi-node-auctionmark"
+spec:
+  ports:
+    - name: metrics
+      port: 80
+      protocol: TCP
+      targetPort: 8080
+  clusterIP: None 
+  selector:
+    app: "xtdb-multi-node-auctionmark"
+---
 apiVersion: batch/v1
 kind: Job
 metadata:
