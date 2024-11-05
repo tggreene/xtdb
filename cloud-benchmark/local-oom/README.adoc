@@ -12,7 +12,7 @@ This directory is interested in recreating the conditions for having pods OOMKil
     AZURE_CLIENT_SECRET: ...
     AZURE_SUBSCRIPTION_ID: ...
     ```
-3. Build the docker image by running `./script/build.sh`
+3. Build the docker image by running `./script/build.sh`, you may need to pick the right architecture for the yourkit agent
 4. If you're using minikube you may need to run
     ```shell
     minikube image load xtdb-local-oom-auctionmark:latest
@@ -24,6 +24,18 @@ This directory is interested in recreating the conditions for having pods OOMKil
     ```
 
 You can run `./scripts/clear-resources.sh` or `./scripts/minikube-clear-resources.sh` in between runs to clear down kubernetes resources and blob storage.
+
+## Running grafana and prometheus
+
+Run the following commands to start grafana and prometheus:
+
+```shell
+kubectl apply -f kubernetes/prometheus-grafana.yaml
+```
+
+This should start grafana available on localhost:3010
+
+NB. There's currently an issue with prometheus scraping the auctionmark pods which I haven't found a solution to so no metrics are coming through currently.
 
 ## Troubleshooting
 

@@ -38,7 +38,9 @@ ENTRYPOINT ["java", \
     "-XX:+PrintNMTStatistics", \
     "-XX:+HeapDumpOnOutOfMemoryError", \
     "-XX:HeapDumpPath=/var/lib/xtdb/heapdump", \
-    # UNCOMMENT BELOW If you want to run a Yourkit agent for Remote Profiling
+    # UNCOMMENT BELOW If you want to run a Yourkit agent for Remote Profiling,
+    # you may need to pick the right agent for your architecture
+    # "-agentpath:/usr/local/YourKit-JavaProfiler-2024.3/bin/linux-x86-64/libyjpagent.so=port=${YOURKIT_PORT},listen=all", \
     "-agentpath:/usr/local/YourKit-JavaProfiler-2024.3/bin/linux-arm-64/libyjpagent.so=port=${YOURKIT_PORT},listen=all", \
     "-cp","xtdb-local-oom-auctionmark.jar", \
     "clojure.main", "-m", "xtdb.run-auctionmark.main"]
