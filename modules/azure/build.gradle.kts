@@ -39,5 +39,8 @@ dependencies {
     // metrics
     api("io.micrometer", "micrometer-registry-azure-monitor", "1.12.2")
 
+    // metrics
+    api("io.micrometer", "micrometer-registry-azure-monitor", "1.12.2")
+
     api(kotlin("stdlib-jdk8"))
 }
