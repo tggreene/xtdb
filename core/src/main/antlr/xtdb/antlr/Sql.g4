@@ -84,6 +84,7 @@ literal
     | 'URI' characterString #URILiteral
     | 'KEYWORD' characterString #KeywordLiteral
     | (TRUE | FALSE) #BooleanLiteral
+    | ('ON' | 'OFF') #OnOffLiteral
     | NULL #NullLiteral
     ;
 
@@ -122,6 +123,7 @@ identifier
         | 'USER' | 'PASSWORD'
         | 'VARBINARY' | 'BYTEA'
         | 'URI'
+        | 'STANDARD_CONFORMING_STRINGS'
         | setFunctionType )
         # RegularIdentifier
     | DELIMITED_IDENTIFIER # DelimitedIdentifier

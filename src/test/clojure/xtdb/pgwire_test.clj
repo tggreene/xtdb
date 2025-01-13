@@ -912,6 +912,11 @@
       (sql "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
       (is (= #{{:xt/id 42}, {:xt/id 43}} (set (q conn ["SELECT _id from foo"])))))))
 
+(deftest set-standard-conforming-strings-on
+  (with-open [conn (jdbc-conn)]
+    (let [sql #(q conn [%])]
+      (sql "SET STANDARD_CONFORMING_STRINGS = ON"))))
+
 (deftest set-valid-time-defaults-test
   (with-open [conn (jdbc-conn)]
     (let [sql #(q conn [%])]
