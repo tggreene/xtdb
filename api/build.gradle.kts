@@ -62,7 +62,3 @@ kotlin {
         }
     }
 }
-
-tasks.dokkaHtmlPartial {
-    moduleName.set("xtdb-api")
-}

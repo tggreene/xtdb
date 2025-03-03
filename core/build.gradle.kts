@@ -117,6 +117,14 @@ tasks.compileTestKotlin {
     dependsOn("generateTestGrammarSource")
 }
 
+tasks.dokkaGenerateModuleHtml {
+    dependsOn(tasks.generateGrammarSource)
+}
+
+tasks.dokkaGeneratePublicationHtml {
+    dependsOn(tasks.generateGrammarSource)
+}
+
 tasks.generateGrammarSource {
     arguments = listOf(
         "-visitor", "-no-listener",
@@ -136,20 +144,6 @@ protobuf {
             it.builtins {
                 create("kotlin")
             }
-        }
-    }
-}
-
-tasks.dokkaHtmlPartial {
-    dokkaSourceSets["main"].run {
-        perPackageOption {
-            matchingRegex.set(".*")
-            suppress.set(true)
-        }
-
-        perPackageOption {
-            matchingRegex.set("xtdb\\.api.*")
-            suppress.set(false)
         }
     }
 }

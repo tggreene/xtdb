@@ -18,6 +18,7 @@ plugins {
     kotlin("jvm")
     kotlin("plugin.serialization")
     id("org.jetbrains.dokka")
+    id("org.jetbrains.dokka-javadoc")
 }
 
 val defaultJvmArgs = listOf(
@@ -79,13 +80,6 @@ allprojects {
                 )
             }
         }
-
-        if (plugins.hasPlugin("org.jetbrains.dokka"))
-            tasks.register<Jar>("dokkaJavadocJar") {
-                dependsOn(tasks.dokkaJavadoc)
-                from(tasks.dokkaJavadoc.flatMap { it.outputDirectory })
-                archiveClassifier.set("javadoc")
-            }
 
         tasks.test {
             jvmArgs(defaultJvmArgs + sixGBJvmArgs)
@@ -192,11 +186,6 @@ allprojects {
                 publications.named("maven", MavenPublication::class) {
                     from(components["java"])
 
-                    if (plugins.hasPlugin("org.jetbrains.dokka"))
-                        artifact(tasks["dokkaJavadocJar"]) {
-                            this.classifier = "javadoc"
-                        }
-
                     pom {
                         url.set("https://xtdb.com")
 
@@ -256,8 +245,6 @@ allprojects {
 
 project(":xtdb-core").run {
     tasks["sourcesJar"].dependsOn("generateGrammarSource")
-    tasks["dokkaJavadoc"].dependsOn("generateGrammarSource")
-    tasks["dokkaHtmlPartial"].dependsOn("generateGrammarSource")
 }
 
 dependencies {
@@ -334,6 +321,20 @@ dependencies {
 
     // hato uses cheshire for application/json encoding
     testImplementation("cheshire", "cheshire", "5.12.0")
+
+    dokka(project(":xtdb-api"))
+    dokka(project(":xtdb-core"))
+    dokka(project(":xtdb-jdbc"))
+    dokka(project(":xtdb-http-server"))
+    dokka(project(":xtdb-http-client-jvm"))
+
+    dokka(project(":modules:xtdb-kafka"))
+    dokka(project(":modules:xtdb-aws"))
+    dokka(project(":modules:xtdb-azure"))
+    dokka(project(":modules:xtdb-google-cloud"))
+
+    dokka(project(":modules:xtdb-flight-sql"))
+
 }
 
 if (hasProperty("fin")) {
@@ -461,17 +462,13 @@ createBench(
 
 createBench("products", mapOf("limit" to "--limit"))
 
-tasks.dokkaHtmlMultiModule {
+dokka {
     moduleName.set("")
     moduleVersion.set("2.0.0-SNAPSHOT")
-
-    inputs.file("dokka/logo-styles.css")
-    inputs.file("dokka/logo-icon.svg")
-
-    pluginConfiguration<DokkaBase, DokkaBaseConfiguration> {
-        customAssets = listOf(file("dokka/logo-icon.svg"))
-        customStyleSheets = listOf(file("dokka/logo-styles.css"))
-
-        footerMessage = "© ${Year.now().value} JUXT Ltd"
+    pluginsConfiguration.html {
+        customAssets.from("dokka/logo-icon.svg")
+        customStyleSheets.from("dokka/logo-styles.css")
+        footerMessage.set("© ${Year.now().value} JUXT Ltd")
     }
+
 }

@@ -3,6 +3,7 @@ pluginManagement {
         kotlin("jvm") version "2.1.0"
         kotlin("plugin.serialization") version "2.1.0"
         id("org.jetbrains.dokka") version "2.0.0"
+        id("org.jetbrains.dokka-javadoc") version "2.0.0"
     }
 }
 
