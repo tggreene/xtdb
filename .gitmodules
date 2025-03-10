@@ -4,3 +4,6 @@
 [submodule "railroad"]
 	path = docs/lib/railroad
 	url = https://github.com/tabatkins/railroad-diagrams/
+[submodule "docs/components"]
+	path = docs/components
+	url = git@github.com:xtdb/xtplay-components.git
