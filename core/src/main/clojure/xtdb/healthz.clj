@@ -16,7 +16,9 @@
            (xtdb.api.metrics HealthzConfig)
            xtdb.api.Xtdb$Config
            xtdb.BufferPoolKt
-           (xtdb.indexer LiveIndex LogProcessor)))
+           (xtdb.indexer LiveIndex LogProcessor)
+           xtdb.api.log.Log
+           xtdb.api.log.Log$Message$FlushBlock))
 
 (defn get-ingestion-error [^LogProcessor log-processor]
   (.getIngestionError log-processor))
@@ -59,7 +61,17 @@
                                                                      "X-XTDB-Block-Lag-Healthy" (str block-lag-healthy?)})))))}]
 
                 ["/healthz/ready" {:name :ready
-                                   :get (fn [_] {:status 200, :body "Ready."})}]]
+                                   :get (fn [_] {:status 200, :body "Ready."})}]
+
+                ["/healthz/flushblock" {:name :flushblock
+                                        :post (fn [{:keys [^LogProcessor log-processor]}]
+                                             (try
+                                               (let [^Log log (.log log-processor)
+                                                     ^Log$Message$FlushBlock flush-msg (Log$Message$FlushBlock. -1)]
+                                                 (.appendMessage log flush-msg)
+                                                 {:status 200, :body "Block flush message sent successfully."})
+                                               (catch Exception e
+                                                 {:status 500, :body (str "Error sending flush block message: " (.getMessage e))})))}]]
 
                {:data {:interceptors [[ri.exception/exception-interceptor
                                        (merge ri.exception/default-handlers
