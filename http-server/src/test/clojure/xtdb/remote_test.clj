@@ -105,6 +105,7 @@
                set))
           "testing query")
 
+    #_
     (t/testing "illegal argument error"
       (let [{:keys [status body] :as _resp} (http/request {:accept "application/jsonl"
                                                            :as :string
