@@ -52,88 +52,95 @@
        (mapv tx-ops/parse-tx-op)))
 
 (deftest json-response-test
-  (xt/submit-tx tu/*node* [[:put-docs :foo {:xt/id 1}]])
-  (Thread/sleep 100)
+  (try
+    (xt/submit-tx tu/*node* [[:put-docs :foo {:xt/id 1}]])
 
-  (t/is (= {"latestSubmittedTxId" 0,
-            "latestCompletedTx" {"txId" 0, "systemTime" "2020-01-01T00:00:00Z"}}
-           (-> (http/request {:accept :json
+    (t/is (= {"latestSubmittedTxId" 0,
+              "latestCompletedTx" {"txId" 0, "systemTime" "2020-01-01T00:00:00Z"}}
+             (-> (http/request {:accept :json
+                                :as :string
+                                :request-method :post
+                                :content-type :transit+json
+                                :form-params {}
+                                :url (http-url "status")})
+                 :body
+                 decode-json))
+          "testing status")
+
+    (t/is (= 1
+             (-> (http/request {:accept :json
+                                :as :string
+                                :request-method :post
+                                :content-type :transit+json
+                                :form-params {:tx-ops possible-tx-ops}
+                                :transit-opts transit-opts
+                                :url (http-url "tx")})
+                 :body
+                 decode-json))
+          "testing tx")
+
+    (t/is (= [{:xt/id 1}]
+             (xt/q tu/*node* '(from :docs [xt/id])
+                   {:snapshot-time #xt/zdt "2020-01-02Z"
+                    :after-tx-id 1})))
+
+    (xt/submit-tx tu/*node* [[:put-docs :docs {:xt/id 2 :key :some-keyword}]])
+
+    (t/is (=
+           ;; TODO figure out clojure bug
+           #_#{{"xt/id" 1} {"xt/id" 2 "key" :some-keyword}}
+           (java.util.Set/of (java.util.Map/of "xt/id" 1)
+                             (java.util.Map/of "xt/id" 2 "key" :some-keyword))
+           (-> (http/request {:accept "application/jsonl"
                               :as :string
                               :request-method :post
                               :content-type :transit+json
-                              :form-params {}
-                              :url (http-url "status")})
-               :body
-               decode-json))
-        "testing status")
-
-  (t/is (= 1
-           (-> (http/request {:accept :json
-                              :as :string
-                              :request-method :post
-                              :content-type :transit+json
-                              :form-params {:tx-ops possible-tx-ops}
+                              :form-params {:query '(from :docs [xt/id key])
+                                            :after-tx-id 2
+                                            :key-fn #xt/key-fn :kebab-case-keyword}
                               :transit-opts transit-opts
-                              :url (http-url "tx")})
+                              :url (http-url "query")})
                :body
-               decode-json))
-        "testing tx")
+               decode-json*
+               set))
+          "testing query")
 
-  (t/is (= [{:xt/id 1}]
-           (xt/q tu/*node* '(from :docs [xt/id])
-                 {:snapshot-time #xt/zdt "2020-01-02Z"
-                  :after-tx-id 1})))
+    (t/testing "illegal argument error"
+      (let [{:keys [status body] :as _resp} (http/request {:accept "application/jsonl"
+                                                           :as :string
+                                                           :request-method :post
+                                                           :content-type :transit+json
+                                                           :form-params {:query '(from docs [name])}
+                                                           :url (http-url "query")
+                                                           :throw-exceptions? false})
+            body (decode-json body)]
+        (t/is (= 400 status))
+        (t/is (anomalous? [:incorrect :xtql/malformed-table
+                           '{:table docs, :from [from docs [name]]}]
+                          (throw body)))))
 
-  (xt/submit-tx tu/*node* [[:put-docs :docs {:xt/id 2 :key :some-keyword}]])
+    (t/testing "runtime error"
+      (let [{:keys [status body] :as _resp} (http/request {:accept "application/jsonl"
+                                                           :as :string
+                                                           :request-method :post
+                                                           :content-type :transit+json
+                                                           :form-params {:query '(-> (rel [{}] [])
+                                                                                     (with {:foo (/ 1 0)}))}
+                                                           :transit-opts transit-opts
+                                                           :url (http-url "query")})
+            body (decode-json body)]
+        (t/is (= 200 status))
+        (t/is (anomalous? [:incorrect :xtdb.expression/division-by-zero
+                           "data exception - division by zero"]
+                          (throw body)))))
 
-  (t/is (=
-         ;; TODO figure out clojure bug
-         #_#{{"xt/id" 1} {"xt/id" 2 "key" :some-keyword}}
-         (java.util.Set/of (java.util.Map/of "xt/id" 1)
-                           (java.util.Map/of "xt/id" 2 "key" :some-keyword))
-         (-> (http/request {:accept "application/jsonl"
-                            :as :string
-                            :request-method :post
-                            :content-type :transit+json
-                            :form-params {:query '(from :docs [xt/id key])
-                                          :after-tx-id 2
-                                          :key-fn #xt/key-fn :kebab-case-keyword}
-                            :transit-opts transit-opts
-                            :url (http-url "query")})
-             :body
-             decode-json*
-             set))
-        "testing query")
-
-  (t/testing "illegal argument error"
-    (let [{:keys [status body] :as _resp} (http/request {:accept "application/jsonl"
-                                                         :as :string
-                                                         :request-method :post
-                                                         :content-type :transit+json
-                                                         :form-params {:query '(from docs [name])}
-                                                         :url (http-url "query")
-                                                         :throw-exceptions? false})
-          body (decode-json body)]
-      (t/is (= 400 status))
-      (t/is (anomalous? [:incorrect :xtql/malformed-table
-                         '{:table docs, :from [from docs [name]]}]
-                        (throw body)))))
-
-
-  (t/testing "runtime error"
-    (let [{:keys [status body] :as _resp} (http/request {:accept "application/jsonl"
-                                                         :as :string
-                                                         :request-method :post
-                                                         :content-type :transit+json
-                                                         :form-params {:query '(-> (rel [{}] [])
-                                                                                   (with {:foo (/ 1 0)}))}
-                                                         :transit-opts transit-opts
-                                                         :url (http-url "query")})
-          body (decode-json body)]
-      (t/is (= 200 status))
-      (t/is (anomalous? [:incorrect :xtdb.expression/division-by-zero
-                         "data exception - division by zero"]
-                        (throw body))))))
+    (catch Throwable t
+      (t/is (= nil t))
+      (println "=== TEST FAILURE DEBUG ===")
+      (println "Exception message:" (.getMessage t))
+      (println "Stack trace:")
+      (.printStackTrace t)
+      (throw t))))
 
 (def json-tx-ops
   [{"sql" "INSERT INTO docs (_id) VALUES (1)"}
