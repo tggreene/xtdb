@@ -81,8 +81,7 @@ reitit-spec={ group="metosin", name="reitit-spec", version.ref="reitit" }
 hato= { group="hato", name="hato", version="1.0.0" }
 
 ring-core={ group="ring", name="ring-core", version="1.14.1" }
-ring-jetty9-adapter={ group="info.sunng", name="ring-jetty9-adapter", version="0.22.7" }
-jetty-alpn-server={ group="org.eclipse.jetty", name="jetty-alpn-server", version="10.0.15" }
+ring-jetty9-adapter={ group="info.sunng", name="ring-jetty9-adapter", version="0.30.1" }
 
 testcontainers={ group="org.testcontainers", name="testcontainers", version.ref="testcontainers" }
 testcontainers-kafka={ group="org.testcontainers", name="kafka", version.ref="testcontainers" }
