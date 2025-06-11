@@ -36,7 +36,7 @@ jobs:
 
       - name: Test
         # TODO Remove after tests
-        run: ./gradlew :xtdb-http-server:test --tests '*json-response-test*'
+        run: ./gradlew :xtdb-http-server:test
 
       - name: Publish Test Report
         uses: mikepenz/action-junit-report@v4
