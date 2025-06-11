@@ -1,7 +1,6 @@
 (ns xtdb.remote-test
   (:require [clojure.string :as str]
             [clojure.test :as t :refer [deftest]]
-            [cognitect.transit :as transit]
             [hato.client :as http]
             [xtdb.api :as xt]
             [xtdb.error :as err]
@@ -12,8 +11,7 @@
             [xtdb.tx-ops :as tx-ops]
             [xtdb.util :as util])
   (:import (xtdb JsonSerde)
-           (xtdb.error Incorrect)
-           (java.io ByteArrayOutputStream)))
+           (xtdb.error Incorrect)))
 
 ;; ONLY put stuff here where remote DIFFERS to in-memory
 
@@ -34,12 +32,6 @@
         (recur (conj res (JsonSerde/decode ^String (first lns))) (rest lns))))))
 
 (defn- decode-json [^String s] (first (decode-json* s)))
-
-(defn encode-transit [data]
-  (let [out (ByteArrayOutputStream.)
-        writer (transit/writer out :json)]
-    (transit/write writer data)
-    (.toString out)))
 
 (def transit-opts
   {:decode {:handlers serde/transit-read-handler-map}
@@ -63,7 +55,6 @@
   (xt/submit-tx tu/*node* [[:put-docs :foo {:xt/id 1}]])
   (Thread/sleep 100)
 
-  #_
   (t/is (= {"latestSubmittedTxId" 0,
             "latestCompletedTx" {"txId" 0, "systemTime" "2020-01-01T00:00:00Z"}}
            (-> (http/request {:accept :json
@@ -76,13 +67,12 @@
                decode-json))
         "testing status")
 
-  #_
   (t/is (= 1
            (-> (http/request {:accept :json
                               :as :string
                               :request-method :post
                               :content-type :transit+json
-                              :body (encode-transit {:tx-ops possible-tx-ops})
+                              :form-params {:tx-ops possible-tx-ops}
                               :transit-opts transit-opts
                               :url (http-url "tx")})
                :body
@@ -115,7 +105,6 @@
              set))
         "testing query")
 
-  #_
   (t/testing "illegal argument error"
     (let [{:keys [status body] :as _resp} (http/request {:accept "application/jsonl"
                                                          :as :string
@@ -129,7 +118,8 @@
       (t/is (anomalous? [:incorrect :xtql/malformed-table
                          '{:table docs, :from [from docs [name]]}]
                         (throw body)))))
-  #_
+
+
   (t/testing "runtime error"
     (let [{:keys [status body] :as _resp} (http/request {:accept "application/jsonl"
                                                          :as :string
