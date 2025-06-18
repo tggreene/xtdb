@@ -3136,23 +3136,17 @@
                               (set? obj) (into #{} (map ->const*) obj)
                               (instance? Map obj) (->> obj
                                                        (into {} (map (fn [[k v]]
-                                                                       (MapEntry/create (str (symbol k))
+                                                                       (MapEntry/create k
                                                                                         (->const* v))))))
                               :else obj))]
                     (->const* v)))]
 
-          (->> (for [arg-row (or arg-rows [[]])
-                     row rows]
-                 (->const row (->> arg-row
-                                   (into {} (map-indexed (fn [idx v]
-                                                           (MapEntry/create (symbol (str "?_" idx)) v)))))))
-
-               (group-by (juxt #(get % "_valid_from")
-                               #(get % "_valid_to")))
-
-               (into [] (map (fn [[[vf vt] rows]]
-                               (tx-ops/->PutDocs (str table) (mapv #(dissoc % "_valid_from" "_valid_to") rows)
-                                                 vf vt)))))))))
+          (let [rows (vec (for [arg-row (or arg-rows [[]])
+                                row rows]
+                            (->const row (->> arg-row
+                                              (into {} (map-indexed (fn [idx v]
+                                                                      (MapEntry/create (symbol (str "?_" idx)) v))))))))]
+            [(tx-ops/->PutDocs (str table) rows nil nil)])))))
 
   (visitInsertFromSubquery [_ _])
 
