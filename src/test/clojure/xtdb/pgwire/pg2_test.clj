@@ -292,3 +292,24 @@
   (with-open [pg-conn (pg-conn {})]
     (t/is (= [{:_id 1, :foo "bar"}] (pg/execute pg-conn "FROM docs"))
           "if the driver doesn't know about keywords it might fall back to text")))
+
+
+(deftest test-transit-id-formats
+  (let [insert-and-query (fn [table doc]
+                           (with-open [conn (pg-conn {})]
+                             (pg/execute conn
+                                         (str "INSERT INTO " table " RECORDS $1")
+                                         {:params [(-> doc (serde/write-transit :json) (String.))]
+                                          :oids [(int 16384)]})
+
+                             (pg/execute conn (str "SELECT * FROM " table))))]
+
+    (t/is (= [{:_id 1, :value 1}] (insert-and-query "table_a" {"_id" 1, "value" 1})))
+    (t/is (= [{:_id 1, :value 1}] (insert-and-query "table_b" {"_id" 1, :value 1})))
+    (t/is (= [{:_id 1, :value 1}] (insert-and-query "table_c" {:xt/id 1, "value" 1})))
+    (t/is (thrown-with-msg? org.pg.error.PGErrorResponse #"missing-id" (insert-and-query "table_d" {"xt/id" 1, "value" 1})))
+    (t/is (= [{:_id 1, :value 1}] (insert-and-query "table_e" {:xt/id 1, :value 1})))
+    (t/is (thrown-with-msg? org.pg.error.PGErrorResponse #"missing-id" (insert-and-query "table_f" {:xt/db 1, :value 1})))))
+
+;; - pgwire
+;; - dml execute
