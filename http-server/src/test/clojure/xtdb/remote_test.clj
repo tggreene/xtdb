@@ -127,7 +127,7 @@
   [{"sql" "INSERT INTO docs (_id) VALUES (1)"}
    {"sql" "INSERT INTO docs (_id) VALUES (2)"}
    {"sql" "DELETE FROM docs WHERE _id = 1"}
-   {"sql" "INSERT INTO docs (_id, _valid_from, _valid_to) VALUES (3, DATE '2050-01-01', DATE '2051-01-01')"}
+   {"sql" "INSERT INTO docs (_id, _valid_from, _valid_to) VALUES (3, TIMESTAMP '2050-01-01T00:00:00[UTC]', TIMESTAMP '2051-01-01T00:00:00[UTC]')"}
    {"sql" "ERASE FROM docs WHERE _id = 3"}
    {"sql" "INSERT INTO docs (_id, bar, toto) VALUES (3, 1, 'toto')"}
    {"sql" "INSERT INTO docs (_id, bar, toto) VALUES (4, 1, 'toto')"}

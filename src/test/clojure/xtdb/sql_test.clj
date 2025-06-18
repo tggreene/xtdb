@@ -2139,35 +2139,58 @@ SELECT PERIOD(DATE '2022-12-31', TIMESTAMP '2023-01-02') CONTAINS (DATE '2023-01
     (t/is (nil? (sql/sql->static-ops "INSERT INTO baz (bar) SELECT bar FROM foo" nil))
           "excludes insert-from-subquery"))
 
-  (t/is (= [(tx-ops/map->PutDocs {:table-name "public/foo", :docs [{"_id" 1, "v" 2}]})]
+  (t/is (= [(tx-ops/map->PutDocs {:table-name "public/foo", :docs [{:_id 1, :v 2}]})]
            (sql/sql->static-ops "INSERT INTO foo (_id, v) VALUES (1, 2)" nil)))
+
+  (xt/execute-tx tu/*node* ["INSERT INTO foo (_id, v) VALUES (1, 2)"])
+  (t/is (= [{:xt/id 1, :v 2}]
+           (xt/q tu/*node* "SELECT * FROM foo")))
+
+  (xt/execute-tx tu/*node* ["INSERT INTO docs (_id, _valid_from, _valid_to) VALUES (3, TIMESTAMP '2050-01-01T00:00:00[UTC]', TIMESTAMP '2051-01-01T00:00:00[UTC]')"])
+  (t/is (= [{:xt/id 3}]
+           (xt/q tu/*node* "SELECT * FROM docs FOR ALL VALID_TIME WHERE _id = 3"))
+        "valid from and valid to")
 
   (t/is (nil? (sql/sql->static-ops "INSERT INTO foo (_id, v) VALUES (1, 2 + 3)" nil))
         "excludes expressions")
 
-  (t/is (= [(tx-ops/map->PutDocs {:table-name "public/foo", :docs [{"_id" 1} {"_id" 2}]
-                                  :valid-from #xt/date "2020-08-01"})
-            (tx-ops/map->PutDocs {:table-name "public/foo", :docs [{"_id" 3}]
-                                  :valid-from #xt/date "2021-01-01"})]
+  (t/is (= [(tx-ops/map->PutDocs {:table-name "public/foo",
+                                  :docs
+                                  [{:_id 1, :_valid_from #xt/date "2020-08-01"}
+                                   {:_id 2, :_valid_from #xt/date "2020-08-01"}
+                                   {:_id 3, :_valid_from #xt/date "2021-01-01"}]})]
 
-           (sql/sql->static-ops "INSERT INTO foo (_id, _valid_from) VALUES (1, DATE '2020-08-01'), (2, DATE '2020-08-01'), (3, DATE '2021-01-01')" nil))
-        "groups by valid-from")
+           (sql/sql->static-ops "INSERT INTO foo (_id, _valid_from) VALUES (1, DATE '2020-08-01'), (2, DATE '2020-08-01'), (3, DATE '2021-01-01')" nil)))
 
   (t/testing "with args"
-    (t/is (= [(tx-ops/map->PutDocs {:table-name "public/foo", :docs [{"_id" 1} {"_id" 3}]
-                                    :valid-from #xt/date "2020-01-01"})
-              (tx-ops/map->PutDocs {:table-name "public/foo", :docs [{"_id" 2} {"_id" 4}]
-                                    :valid-from #xt/date "2020-01-02"})]
+    (t/is (= [(tx-ops/map->PutDocs {:table-name "public/foo",
+                                    :docs
+                                    [{:_id 1, :_valid_from #xt/date "2020-01-01"}
+                                     {:_id 2, :_valid_from #xt/date "2020-01-02"}
+                                     {:_id 3, :_valid_from #xt/date "2020-01-01"}
+                                     {:_id 4, :_valid_from #xt/date "2020-01-02"}]})]
 
              (sql/sql->static-ops "INSERT INTO foo (_id, _valid_from) VALUES (?, DATE '2020-01-01'), (?, DATE '2020-01-02')"
                                   [[1 2] [3 4]]))))
 
   (t/testing "insert records"
-    (t/is (= [(tx-ops/map->PutDocs {:table-name "public/bar", :docs [{"_id" 0, "value" "hola"} {"_id" 1, "value" "mundo"}],
+    (t/is (= [(tx-ops/map->PutDocs {:table-name "public/bar",
+                                    :docs [{"_id" 0, "value" "hola", "_valid_from" #xt/zdt "2025-01-01Z"}
+                                           {:xt/id 1, :value "mundo", :xt/valid-from #xt/zdt "2025-02-01Z"}],
                                     :valid-from nil, :valid-to nil})]
              (sql/sql->static-ops "INSERT INTO bar RECORDS $1"
-                                  [[{"_id" 0, "value" "hola"}]
-                                   [{"_id" 1, "value" "mundo"}]])))))
+                                  [[{"_id" 0, "value" "hola", "_valid_from" #xt/zdt "2025-01-01Z"}]
+                                   [{:xt/id 1, :value "mundo", :xt/valid-from #xt/zdt "2025-02-01Z"}]])))
+    (xt/execute-tx tu/*node* [[:sql "INSERT INTO bar RECORDS ?"
+                               [{"_id" 0, "value" "hola", "_valid_from" #xt/zdt "2025-01-01Z[UTC]"}]
+                               [{"_id" 1, "value" "mundo", "_valid_from" #xt/zdt "2025-02-01Z[UTC]"}]]])
+    (t/is (= [{:xt/id 1,
+               :value "mundo",
+               :xt/valid-from #xt/zdt "2025-02-01T00:00Z[UTC]"}
+              {:xt/id 0,
+               :value "hola",
+               :xt/valid-from #xt/zdt "2025-01-01T00:00Z[UTC]"}]
+             (xt/q tu/*node* "SELECT *, _valid_from FROM bar FOR ALL VALID_TIME")))))
 
 (t/deftest test-sql->static-ops-decimals-4483
   (t/is (= [(tx-ops/map->PutDocs {:table-name "public/foo",
