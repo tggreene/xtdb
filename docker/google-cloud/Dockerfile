@@ -27,6 +27,12 @@ EXPOSE 8080
 RUN mkdir -p /var/lib/xtdb
 VOLUME /var/lib/xtdb
 
+RUN groupadd -r xtdb && useradd -r -g xtdb xtdb
+RUN mkdir -p /home/xtdb && chown -R xtdb:xtdb /home/xtdb
+RUN chown -R xtdb:xtdb /var/lib/xtdb
+
+USER xtdb
+
 ARG GIT_SHA
 ARG XTDB_VERSION
 ENV GIT_SHA=${GIT_SHA}
