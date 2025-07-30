@@ -1,0 +1,10 @@
+apiVersion: v2
+name: xtdb-helm
+description: A Helm chart for setting up a simple XTDB cluster on AWS
+type: application
+version: 2.0.0-SNAPSHOTg
+appVersion: "2.0.0-SNAPSHOTa"
+dependencies:
+  - name: kafka
+    version: 31.x.x
+    repository: oci://registry-1.docker.io/bitnamicharts/kafka

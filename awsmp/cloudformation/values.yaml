@@ -1,0 +1,10 @@
+global:
+  defaultStorageClass: gp2
+listeners:
+  client:
+    protocol: PLAINTEXT
+  controller:
+    protocol: PLAINTEXT
+controller:
+  resourcesPreset: medium
+  nodeSelector: {}

@@ -1,0 +1,18 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::199686536682:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/0C153561671D997DE1AF57D6E0C84B25"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "oidc.eks.us-east-1.amazonaws.com/id/0C153561671D997DE1AF57D6E0C84B25:aud": "sts.amazonaws.com",
+          "oidc.eks.us-east-1.amazonaws.com/id/0C153561671D997DE1AF57D6E0C84B25:sub": "system:serviceaccount:xtdb-deployment:xtdb-service-account"
+        }
+      }
+    }
+  ]
+}
