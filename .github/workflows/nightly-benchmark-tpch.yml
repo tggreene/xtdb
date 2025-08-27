@@ -1,0 +1,45 @@
+name: Nightly Benchmark TPC-H
+
+on:
+  workflow_dispatch:
+  # schedule:
+  #   - cron: '*/15 * * * *'  # Run every 15 minutes
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: nightly-benchmark-tpch
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    name: Run Nightly Benchmark TPC-H
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure CLI Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.BENCHMARK_AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.BENCHMARK_AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.BENCHMARK_AZURE_SUBSCRIPTION_ID }}
+
+      - name: Acquire Kubernetes Configuration
+        run: |
+          az aks get-credentials --resource-group cloud-benchmark-resources --name xtdb-bench-cluster
+
+      - name: Run Benchmark
+        run: |
+          helm dependency update ./modules/bench/cloud/helm
+          helm upgrade --install "xtdb-benchmark" ./modules/bench/cloud/helm \
+            --namespace "cloud-benchmark" \
+            --create-namespace \
+            -f ./modules/bench/cloud/azure/values.yaml \
+            --set "benchType=tpch" \
+            --set "providerConfig.env.AZURE_USER_MANAGED_IDENTITY_CLIENT_ID=${{ secrets.BENCHMARK_AZURE_USER_MANAGED_IDENTITY_CLIENT_ID }}" \
+            --set "providerConfig.serviceAccountAnnotations.azure\.workload\.identity/client-id=${{ secrets.BENCHMARK_AZURE_USER_MANAGED_IDENTITY_CLIENT_ID }}" \
