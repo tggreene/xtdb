@@ -47,7 +47,7 @@ providerConfig:
   nodeConfig:
 
 image:
-  repository: ghcr.io/xtdb/xtdb-bench
+  repository: ghcr.io/tggreene/xtdb-bench
   pullPolicy: Always
   tag: "latest"
 
