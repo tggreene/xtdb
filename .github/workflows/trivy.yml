@@ -13,15 +13,22 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
 
-      - name: Run Trivy against sample XTDBk8s
+      - name: Trivy config scan (Helm values)
         uses: aquasecurity/trivy-action@915b19bbe73b92a6cf82a1bc12b087c9a19a5fe2 # v0.28.0
         with:
-          scan-type: "fs"
-          scan-ref: ./modules/azure/docs/azure-setup-guide/kubernetes/xtdb.yaml
-          scanners: "vuln,secret,misconfig"
+          scan-type: "config"
+          scan-ref: ./azure/helm
+          scanners: "misconfig"
           format: 'template'
           output: 'trivy-report.html'
           template: '@.github/trivy/trivy-html-template.tpl'
+          args: |
+            --helm-set-string xtdbConfig.serviceAccount=abc \
+            --helm-set-string xtdbConfig.storageAccountName=abc \
+            --helm-set-string xtdbConfig.storageContainerName=abc \
+            --helm-set-string xtdbConfig.userManagedIdentityClientId=abc \
+            --severity HIGH,CRITICAL \
+            --exit-code 1
 
       - name: HTML Trivy Report
         shell: bash
