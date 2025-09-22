@@ -13,6 +13,10 @@ terraform {
       source  = "hashicorp/azurerm"
       version = ">= 4.44.0"
     }
+    azapi = {
+      source  = "azure/azapi"
+      version = ">= 1.13.0"
+    }
   }
 }
 
@@ -20,6 +24,8 @@ provider "azurerm" {
   features {}
   subscription_id = "91804669-c60b-4727-afa2-d7021fe5055b"
 }
+
+provider "azapi" {}
 
 locals {
   stream_name = "Custom-${var.table_name}"
@@ -140,16 +146,71 @@ resource "azurerm_role_assignment" "dcr_sender" {
   principal_id         = var.sender_principal_id
 }
 
+# Logic App: Relay Azure Monitor alerts to Slack (Incoming Webhook)
+resource "azurerm_logic_app_workflow" "bench_alert_relay" {
+  name                = "xtdb-bench-alert-relay"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  enabled             = true
+}
+
+resource "azurerm_logic_app_trigger_http_request" "bench_alert_trigger" {
+  name         = "http_trigger"
+  logic_app_id = azurerm_logic_app_workflow.bench_alert_relay.id
+  schema       = <<SCHEMA
+{
+  "type": "object"
+}
+SCHEMA
+}
+
+resource "azurerm_logic_app_action_http" "bench_alert_post_to_slack" {
+  name         = "PostToSlack"
+  logic_app_id = azurerm_logic_app_workflow.bench_alert_relay.id
+  method       = "POST"
+  uri          = var.slack_webhook_url
+
+  headers = {
+    "Content-Type" = "application/json"
+  }
+
+  body = jsonencode({
+    attachments = [
+      {
+        color       = "#D32F2F"
+        title       = "@{coalesce(triggerBody()?['data']?['essentials']?['alertRule'], 'Alert')}"
+        title_link  = "@{concat('https://portal.azure.com/#blade/Microsoft_Azure_Monitoring/AlertDetailsTemplateBlade/alertId/', uriComponent(triggerBody()?['data']?['essentials']?['alertId']))}"
+        text        = "@{concat('*Severity:* ', coalesce(string(triggerBody()?['data']?['essentials']?['severity']), 'N/A'), '\n', '*Description:* ', coalesce(triggerBody()?['data']?['essentials']?['description'], ''), '\n', '*Target:* ', coalesce(triggerBody()?['data']?['essentials']?['alertTargetIDs'][0], ''))}"
+        mrkdwn_in   = ["text"]
+      }
+    ]
+  })
+}
+
+resource "azapi_resource_action" "bench_alert_relay_cb" {
+  type        = "Microsoft.Logic/workflows/triggers@2019-05-01"
+  resource_id = "${azurerm_logic_app_workflow.bench_alert_relay.id}/triggers/${azurerm_logic_app_trigger_http_request.bench_alert_trigger.name}"
+  action      = "listCallbackUrl"
+  method      = "POST"
+  response_export_values = ["value"]
+}
+
 # Action Group for alerts (Slack via webhook)
 resource "azurerm_monitor_action_group" "bench_slack" {
   name                = var.action_group_name
   resource_group_name = var.resource_group_name
   short_name          = var.action_group_short_name
 
-  webhook_receiver {
-    name                    = "slack"
-    service_uri             = var.slack_webhook_url
+  logic_app_receiver {
+    name                    = "slack-relay"
+    resource_id             = azurerm_logic_app_workflow.bench_alert_relay.id
+    callback_url            = azapi_resource_action.bench_alert_relay_cb.output.value
     use_common_alert_schema = true
+  }
+
+  email_receiver {
+    name           = "tim"
+    email_address  = "tim@juxt.pro"
   }
 }
 
@@ -193,6 +254,10 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "bench_slow_alert" {
     time_aggregation_method = "Count"
     operator         = "GreaterThan"
     threshold        = 0
+    failing_periods {
+      number_of_evaluation_periods = 1
+      minimum_failing_periods_to_trigger_alert = 1
+    }
   }
 
   action {
