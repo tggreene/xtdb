@@ -17,23 +17,21 @@ action_group_name       = "xtdb-benchmark-alerts"
 action_group_short_name = "xtdbbench"
 # set via TF_VAR_slack_webhook_url = "https://hooks.slack.com/services/XXX/YYY/ZZZ"
 # slack_webhook_url       = "https://hooks.slack.com/services/XXX/YYY/ZZZ"
-alert_email_receiver_name  = "tim"
-alert_email_address        = "tim@juxt.pro"
 
-# Alert configuration (slow run vs baseline)
-slow_alert_name            = "xtdb-benchmark-slow-alert"
-fast_alert_name            = "xtdb-benchmark-fast-alert"
-alert_severity             = 3          # 0..4
-alert_enabled              = true
-alert_evaluation_frequency = "P1D"      # evaluate every 1 day
-alert_window_duration      = "P30D"     # lookback window
-alert_baseline_n           = 20         # previous N runs for baseline
-alert_sigma                = 2          # 2σ slower than baseline
-alert_scale_factor         = 0.5
+# Anomaly detection parameters (used by Logic App)
+anomaly_logic_app_name     = "xtdb-benchmark-anomaly"
+anomaly_alert_enabled      = false
+anomaly_repo               = "xtdb/xtdb"
+anomaly_schedule_frequency = "Hour"
+anomaly_schedule_interval  = 1
+anomaly_baseline_n         = 20    # previous N runs for baseline
+anomaly_sigma              = 0.01  # 2σ threshold
+anomaly_scale_factor       = 0.5   # The scale factor to select on
+anomaly_timespan           = "P30D"
 
 missing_alert_evaluation_frequency = "P1D"
 missing_alert_window_duration      = "P2D"
-missing_alert_enabled              = true
+missing_alert_enabled              = false
 missing_alert_severity             = 2
 
 dashboard_name = "xtdb-benchmark-dashboard"
