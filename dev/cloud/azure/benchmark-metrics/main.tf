@@ -209,8 +209,8 @@ resource "azurerm_monitor_action_group" "bench_slack" {
   }
 
   email_receiver {
-    name           = "tim"
-    email_address  = "tim@juxt.pro"
+    name           = var.alert_email_receiver_name
+    email_address  = var.alert_email_address
   }
 }
 
@@ -230,25 +230,29 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "bench_slow_alert" {
   criteria {
     query = <<-KQL
       let N = toint(${var.alert_baseline_n});
-      let threshold = todouble(${var.alert_threshold_fraction});
+      // Latest overall duration
       let latestBenchmark =
           ${var.table_name}
           | where step == "overall" and metric == "duration_ms"
+          | where benchmark == "tpch" and toreal(params.scaleFactor) == ${var.alert_scale_factor}
           | summarize arg_max(TimeGenerated, *)
           | extend current_ms = todouble(value), k = 1;
-      let baseline =
+      // Previous N overall durations (excluding the latest)
+      let prevN =
           ${var.table_name}
           | where step == "overall" and metric == "duration_ms"
+          | where benchmark == "tpch" and toreal(params.scaleFactor) == ${var.alert_scale_factor}
           | order by TimeGenerated desc
           | top N+1 by TimeGenerated desc
           | top N by TimeGenerated asc
-          | order by TimeGenerated desc
-          | summarize baseline_ms = avg(todouble(value))
-          | extend k = 1;
+          | project value = todouble(value), TimeGenerated
+          ;
+      let baseline = prevN | summarize baseline_mean = avg(value), baseline_std = stdev(value) | extend k = 1;
       latestBenchmark
         | join kind=inner baseline on k
-        | extend delta_pct = (current_ms - baseline_ms) / baseline_ms
-        | where delta_pct > threshold
+        | where isnotnull(baseline_std) and baseline_std > 0
+        | extend threshold_value = baseline_mean + (${var.alert_sigma} * baseline_std)
+        | where current_ms > threshold_value
         | project TimeGenerated
     KQL
     time_aggregation_method = "Count"
@@ -264,7 +268,7 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "bench_slow_alert" {
     action_groups = [azurerm_monitor_action_group.bench_slack.id]
   }
 
-  description = "Alert when latest benchmark duration exceeds baseline by configured threshold"
+  description = "Alert when latest 'overall' duration exceeds baseline mean + ${var.alert_sigma}σ over the previous ${var.alert_baseline_n} runs"
 
   depends_on = [
     azurerm_monitor_data_collection_rule.dcr,

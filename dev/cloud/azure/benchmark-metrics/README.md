@@ -55,6 +55,58 @@ Outputs:
 - `dcr_immutable_id` — use in the Logs Ingestion API path
 - `stream_name` — e.g. `Custom-XTDBBenchmark_CL`
 
+## Configuring alerting (Terraform variables)
+
+Alerting is controlled via variables in `variables.tf`, which you can override in `terraform.tfvars` or via environment variables (preferred for secrets).
+
+- Alert cadence and scope
+  - `alert_evaluation_frequency` — how often to evaluate (e.g., `PT5M`, `PT1H`)
+  - `alert_window_duration` — lookback window (e.g., `P1D`, `PT24H`)
+
+- Baseline and threshold (2σ rule)
+  - `alert_baseline_n` — number of prior runs to compute baseline mean/stddev
+  - `alert_sigma` — sigma multiplier (e.g., `2.0` for 2 standard deviations)
+
+- Alert metadata
+  - `alert_name` — name of the Azure Monitor alert
+  - `alert_severity` — 0 (most severe) to 4 (least)
+  - `alert_enabled` — toggle on/off
+
+- Notifications
+  - `action_group_name`, `action_group_short_name` — Action Group identity
+  - `slack_webhook_url` — Slack Incoming Webhook used by the Logic App relay
+    - Provide this securely via environment, not committed tfvars: `export TF_VAR_slack_webhook_url="https://hooks.slack.com/services/XXX/YYY/ZZZ"`
+  - Temporary email receiver is configured as `tim@juxt.pro` in `main.tf` (remove when no longer needed)
+
+Example overrides in `terraform.tfvars`:
+```hcl
+# alert cadence
+alert_evaluation_frequency = "PT5M"
+alert_window_duration      = "P1D"
+
+# baseline and threshold
+alert_baseline_n = 20
+alert_sigma      = 2.0
+
+# alert metadata
+alert_name     = "xtdb-benchmark-slow-alert"
+alert_severity = 3
+alert_enabled  = true
+
+# action group identity (Slack webhook is supplied via TF_VAR)
+action_group_name       = "xtdb-benchmark-alerts"
+action_group_short_name = "xtdbbench"
+```
+
+Provide Slack webhook at apply time (do not commit secrets):
+```bash
+export TF_VAR_slack_webhook_url="https://hooks.slack.com/services/XXX/YYY/ZZZ"
+terraform -chdir=dev/cloud/azure/benchmark-metrics plan
+terraform -chdir=dev/cloud/azure/benchmark-metrics apply
+```
+
+The alert logic compares the latest `overall` duration to `mean + (alert_sigma * stdev)` over the previous `alert_baseline_n` runs and fires if the latest is higher. It skips evaluation if stdev is missing/zero.
+
 Input payload format (array of records):
 ```json
 [

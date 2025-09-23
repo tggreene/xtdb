@@ -92,8 +92,27 @@ variable "alert_baseline_n" {
   default     = 20
 }
 
-variable "alert_threshold_fraction" {
-  description = "Threshold fraction for slowdown detection (e.g., 0.02 for 2%)"
+variable "alert_sigma" {
+  description = "Sigma multiplier for the stddev-based alert threshold (e.g., 2.0 for 2σ)"
   type        = number
-  default     = 0.02
+  default     = 2
+}
+
+variable "alert_scale_factor" {
+  description = "TPC-H scale factor to scope the alert to (e.g., 0.5)"
+  type        = number
+  default     = 0.5
+}
+
+# Action Group email receiver configuration
+variable "alert_email_receiver_name" {
+  description = "Name for the Action Group email receiver"
+  type        = string
+  default     = "tim"
+}
+
+variable "alert_email_address" {
+  description = "Email address for the Action Group email receiver"
+  type        = string
+  default     = "tim@juxt.pro"
 }
