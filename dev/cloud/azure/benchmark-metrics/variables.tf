@@ -116,3 +116,40 @@ variable "alert_email_address" {
   type        = string
   default     = "tim@juxt.pro"
 }
+
+# Missing ingestion alert configuration
+variable "missing_alert_name" {
+  description = "Name of the missing-ingestion scheduled query alert"
+  type        = string
+  default     = "xtdb-benchmark-missing-ingestion"
+}
+
+variable "missing_alert_severity" {
+  description = "Alert severity (0=Sev0, 4=Sev4) for missing-ingestion"
+  type        = number
+  default     = 2
+}
+
+variable "missing_alert_enabled" {
+  description = "Whether the missing-ingestion alert is enabled"
+  type        = bool
+  default     = true
+}
+
+variable "missing_alert_evaluation_frequency" {
+  description = "How often to evaluate the missing-ingestion alert (ISO 8601 duration, e.g. PT1H)"
+  type        = string
+  default     = "PT1H"
+}
+
+variable "missing_alert_window_duration" {
+  description = "Time window to check for missing-ingestion (ISO 8601 duration, e.g. P2D for 2 days)"
+  type        = string
+  default     = "P2D"
+}
+
+variable "dashboard_name" {
+  description = "Name of the Azure Portal dashboard to create"
+  type        = string
+  default     = "xtdb-benchmark-dashboard"
+}

@@ -269,9 +269,109 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "bench_slow_alert" {
   }
 
   description = "Alert when latest 'overall' duration exceeds baseline mean + ${var.alert_sigma}σ over the previous ${var.alert_baseline_n} runs"
+}
 
-  depends_on = [
-    azurerm_monitor_data_collection_rule.dcr,
-    azurerm_log_analytics_workspace_table.bench
-  ]
+# Scheduled query alert: missing ingestion (no TPC-H runs at the given scale factor within the window)
+resource "azurerm_monitor_scheduled_query_rules_alert_v2" "bench_missing_ingestion" {
+  name                = var.missing_alert_name
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  severity            = var.missing_alert_severity
+  enabled             = var.missing_alert_enabled
+
+  evaluation_frequency = var.missing_alert_evaluation_frequency
+  window_duration      = var.missing_alert_window_duration
+
+  scopes = [azurerm_log_analytics_workspace.law.id]
+
+  criteria {
+    query = <<-KQL
+      ${var.table_name}
+      | where step == "overall" and metric == "duration_ms"
+      | where benchmark == "tpch" and toreal(params.scaleFactor) == ${var.alert_scale_factor}
+      | where TimeGenerated > ago(${var.missing_alert_window_duration})
+      | summarize c = count()
+      | where c == 0
+      | project trigger = 1
+    KQL
+    time_aggregation_method = "Count"
+    operator                = "GreaterThan"
+    threshold               = 0
+    failing_periods {
+      number_of_evaluation_periods            = 1
+      minimum_failing_periods_to_trigger_alert = 1
+    }
+  }
+
+  action {
+    action_groups = [azurerm_monitor_action_group.bench_slack.id]
+  }
+
+  description = "Alert when no TPC-H scaleFactor=${var.alert_scale_factor} 'overall' rows are ingested within ${var.missing_alert_window_duration}"
+}
+
+# Azure Portal Dashboard: 10 most recent runs (line chart)
+resource "azurerm_portal_dashboard" "bench_dashboard" {
+  name                = var.dashboard_name
+  resource_group_name = var.resource_group_name
+  location            = var.location
+
+  dashboard_properties = jsonencode({
+    lenses = {
+      "0" = {
+        order = 0,
+        parts = {
+          "runs-timeseries" = {
+            position = {
+              x       = 0,
+              y       = 0,
+              rowSpan = 6,
+              colSpan = 8
+            }
+            metadata = {
+              type   = "Extension/HubsExtension/PartType/LogsDashboardPart"
+              inputs = [
+                {
+                  name  = "ComponentId"
+                  value = azurerm_log_analytics_workspace.law.id
+                },
+                {
+                  name  = "Query"
+                  value = <<-KQL
+                    ${var.table_name}
+                    | where step == "overall" and metric == "duration_ms"
+                    | where benchmark == "tpch" and toreal(params.scaleFactor) == ${var.alert_scale_factor}
+                    | top 10 by TimeGenerated desc
+                    | order by TimeGenerated asc
+                    | project TimeGenerated, duration_ms = todouble(value)
+                  KQL
+                },
+                {
+                  name  = "Version"
+                  value = "2"
+                },
+                {
+                  name  = "ChartId"
+                  value = "timechart"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    metadata = {
+      model = {
+        timeRange = {
+          value = {
+            relative = {
+              duration = 24,
+              timeUnit = 1
+            }
+          },
+          type = "MsPortalFxTimeRange"
+        }
+      }
+    }
+  })
 }

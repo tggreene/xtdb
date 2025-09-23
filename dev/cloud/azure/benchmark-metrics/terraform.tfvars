@@ -29,3 +29,5 @@ alert_sigma                = 2          # 2σ slower than baseline
 alert_scale_factor         = 0.5
 alert_email_receiver_name  = "tim"
 alert_email_address        = "tim@juxt.pro"
+
+dashboard_name = "xtdb-benchmark-dashboard"
