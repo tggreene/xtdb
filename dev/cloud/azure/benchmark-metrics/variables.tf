@@ -56,10 +56,16 @@ variable "slack_webhook_url" {
 }
 
 # Alert configuration
-variable "alert_name" {
-  description = "Name of the scheduled query alert"
+variable "slow_alert_name" {
+  description = "Name of the scheduled query alert for slow runs"
   type        = string
   default     = "xtdb-benchmark-slow-alert"
+}
+
+variable "fast_alert_name" {
+  description = "Name of the scheduled query alert for fast runs"
+  type        = string
+  default     = "xtdb-benchmark-fast-alert"
 }
 
 variable "alert_severity" {

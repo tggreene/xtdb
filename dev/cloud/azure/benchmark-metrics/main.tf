@@ -216,7 +216,7 @@ resource "azurerm_monitor_action_group" "bench_slack" {
 
 # Scheduled query alert: detect latest run slower than baseline
 resource "azurerm_monitor_scheduled_query_rules_alert_v2" "bench_slow_alert" {
-  name                = var.alert_name
+  name                = var.slow_alert_name
   resource_group_name = var.resource_group_name
   location            = var.location
   severity            = var.alert_severity
@@ -235,6 +235,7 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "bench_slow_alert" {
           ${var.table_name}
           | where step == "overall" and metric == "duration_ms"
           | where benchmark == "tpch" and toreal(params.scaleFactor) == ${var.alert_scale_factor}
+          | where repo == "xtdb/xtdb"
           | summarize arg_max(TimeGenerated, *)
           | extend current_ms = todouble(value), k = 1;
       // Previous N overall durations (excluding the latest)
@@ -242,6 +243,7 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "bench_slow_alert" {
           ${var.table_name}
           | where step == "overall" and metric == "duration_ms"
           | where benchmark == "tpch" and toreal(params.scaleFactor) == ${var.alert_scale_factor}
+          | where repo == "xtdb/xtdb"
           | order by TimeGenerated desc
           | top N+1 by TimeGenerated desc
           | top N by TimeGenerated asc
@@ -271,6 +273,65 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "bench_slow_alert" {
   description = "Alert when latest 'overall' duration exceeds baseline mean + ${var.alert_sigma}σ over the previous ${var.alert_baseline_n} runs"
 }
 
+# Scheduled query alert: detect latest run faster than baseline
+resource "azurerm_monitor_scheduled_query_rules_alert_v2" "bench_fast_alert" {
+  name                = var.fast_alert_name
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  severity            = var.alert_severity
+  enabled             = var.alert_enabled
+
+  evaluation_frequency = var.alert_evaluation_frequency
+  window_duration      = var.alert_window_duration
+
+  scopes = [azurerm_log_analytics_workspace.law.id]
+
+  criteria {
+    query = <<-KQL
+      let N = toint(${var.alert_baseline_n});
+      // Latest overall duration
+      let latestBenchmark =
+          ${var.table_name}
+          | where step == "overall" and metric == "duration_ms"
+          | where benchmark == "tpch" and toreal(params.scaleFactor) == ${var.alert_scale_factor}
+          | where repo == "xtdb/xtdb"
+          | summarize arg_max(TimeGenerated, *)
+          | extend current_ms = todouble(value), k = 1;
+      // Previous N overall durations (excluding the latest)
+      let prevN =
+          ${var.table_name}
+          | where step == "overall" and metric == "duration_ms"
+          | where benchmark == "tpch" and toreal(params.scaleFactor) == ${var.alert_scale_factor}
+          | where repo == "xtdb/xtdb"
+          | order by TimeGenerated desc
+          | top N+1 by TimeGenerated desc
+          | top N by TimeGenerated asc
+          | project value = todouble(value), TimeGenerated
+          ;
+      let baseline = prevN | summarize baseline_mean = avg(value), baseline_std = stdev(value) | extend k = 1;
+      latestBenchmark
+        | join kind=inner baseline on k
+        | where isnotnull(baseline_std) and baseline_std > 0
+        | extend threshold_value = baseline_mean - (${var.alert_sigma} * baseline_std)
+        | where current_ms < threshold_value
+        | project TimeGenerated
+    KQL
+    time_aggregation_method = "Count"
+    operator         = "GreaterThan"
+    threshold        = 0
+    failing_periods {
+      number_of_evaluation_periods = 1
+      minimum_failing_periods_to_trigger_alert = 1
+    }
+  }
+
+  action {
+    action_groups = [azurerm_monitor_action_group.bench_slack.id]
+  }
+
+  description = "Alert when latest 'overall' duration is below baseline mean - ${var.alert_sigma}σ over the previous ${var.alert_baseline_n} runs"
+}
+
 # Scheduled query alert: missing ingestion (no TPC-H runs at the given scale factor within the window)
 resource "azurerm_monitor_scheduled_query_rules_alert_v2" "bench_missing_ingestion" {
   name                = var.missing_alert_name
@@ -289,7 +350,6 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "bench_missing_ingesti
       ${var.table_name}
       | where step == "overall" and metric == "duration_ms"
       | where benchmark == "tpch" and toreal(params.scaleFactor) == ${var.alert_scale_factor}
-      | where TimeGenerated > ago(${var.missing_alert_window_duration})
       | summarize c = count()
       | where c == 0
       | project trigger = 1
@@ -319,57 +379,159 @@ resource "azurerm_portal_dashboard" "bench_dashboard" {
   dashboard_properties = jsonencode({
     lenses = {
       "0" = {
-        order = 0,
+        order = 0
         parts = {
           "runs-timeseries" = {
             position = {
-              x       = 0,
-              y       = 0,
-              rowSpan = 6,
-              colSpan = 8
+              x       = 0
+              y       = 0
+              colSpan = 6
+              rowSpan = 4
             }
             metadata = {
-              type   = "Extension/HubsExtension/PartType/LogsDashboardPart"
               inputs = [
                 {
-                  name  = "ComponentId"
-                  value = azurerm_log_analytics_workspace.law.id
+                  name       = "resourceTypeMode"
+                  isOptional = true
                 },
                 {
-                  name  = "Query"
-                  value = <<-KQL
-                    ${var.table_name}
+                  name       = "ComponentId"
+                  isOptional = true
+                },
+                {
+                  name       = "Scope"
+                  value = {
+                    resourceIds = [
+                      "/subscriptions/91804669-c60b-4727-afa2-d7021fe5055b/resourcegroups/xtdb-benchmark-metrics/providers/microsoft.operationalinsights/workspaces/xtdb-benchmark-metrics"
+                    ]
+                  }
+                  isOptional = true
+                },
+                {
+                  name       = "PartId"
+                  value      = "158d931e-8294-47ce-8d13-c04026627f42"
+                  isOptional = true
+                },
+                {
+                  name       = "Version"
+                  value      = "2.0"
+                  isOptional = true
+                },
+                {
+                  name       = "TimeRange"
+                  value      = "P1D"
+                  isOptional = true
+                },
+                {
+                  name       = "DashboardId"
+                  isOptional = true
+                },
+                {
+                  name       = "DraftRequestParameters"
+                  isOptional = true
+                },
+                {
+                  name       = "Query"
+                  value      = <<-KQL
+                    XTDBBenchmark_CL
                     | where step == "overall" and metric == "duration_ms"
-                    | where benchmark == "tpch" and toreal(params.scaleFactor) == ${var.alert_scale_factor}
+                    | where benchmark == "tpch"
                     | top 10 by TimeGenerated desc
                     | order by TimeGenerated asc
                     | project TimeGenerated, duration_ms = todouble(value)
                   KQL
+                  isOptional = true
                 },
                 {
-                  name  = "Version"
-                  value = "2"
+                  name       = "ControlType"
+                  value      = "FrameControlChart"
+                  isOptional = true
                 },
                 {
-                  name  = "ChartId"
-                  value = "timechart"
+                  name       = "SpecificChart"
+                  value      = "Line"
+                  isOptional = true
+                },
+                {
+                  name       = "PartTitle"
+                  value      = "Benchmark TPC-H Runs"
+                  isOptional = true
+                },
+                {
+                  name       = "PartSubTitle"
+                  value      = "xtdb-benchmark-metrics"
+                  isOptional = true
+                },
+                {
+                  name = "Dimensions"
+                  value = {
+                    xAxis = {
+                      name = "TimeGenerated"
+                      type = "datetime"
+                    }
+                    yAxis = [
+                      {
+                        name = "duration_ms"
+                        type = "real"
+                      }
+                    ]
+                    splitBy     = []
+                    aggregation = "Sum"
+                  }
+                  isOptional = true
+                },
+                {
+                  name = "LegendOptions"
+                  value = {
+                    isEnabled = true
+                    position  = "Bottom"
+                  }
+                  isOptional = true
+                },
+                {
+                  name       = "IsQueryContainTimeRange"
+                  value      = false
+                  isOptional = true
                 }
               ]
+              type     = "Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart"
+              settings = {}
             }
           }
         }
       }
-    },
+    }
     metadata = {
       model = {
         timeRange = {
           value = {
             relative = {
-              duration = 24,
+              duration = 24
               timeUnit = 1
             }
-          },
+          }
           type = "MsPortalFxTimeRange"
+        }
+        filterLocale = {
+          value = "en-us"
+        }
+        filters = {
+          value = {
+            MsPortalFx_TimeRange = {
+              model = {
+                format      = "utc"
+                granularity = "auto"
+                relative    = "24h"
+              }
+              displayCache = {
+                name  = "UTC Time"
+                value = "Past 24 hours"
+              }
+              filteredPartIds = [
+                "StartboardPart-LogsDashboardPart-22bc70d2-f7ad-42ba-a586-df4ab8272012"
+              ]
+            }
+          }
         }
       }
     }
