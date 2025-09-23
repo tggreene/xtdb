@@ -31,6 +31,11 @@ alert_baseline_n           = 20         # previous N runs for baseline
 alert_sigma                = 2          # 2σ slower than baseline
 alert_scale_factor         = 0.5
 
+anomaly_logic_app_name = "xtdb-benchmark-anomaly"
+anomaly_schedule_frequency = "Minute"
+anomaly_schedule_interval  = "5"
+anomaly_timespan           = "P30D"
+
 missing_alert_evaluation_frequency = "P1D"
 missing_alert_window_duration      = "P2D"
 missing_alert_enabled              = true

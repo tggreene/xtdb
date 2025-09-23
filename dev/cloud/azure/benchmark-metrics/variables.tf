@@ -159,3 +159,28 @@ variable "dashboard_name" {
   type        = string
   default     = "xtdb-benchmark-dashboard"
 }
+
+# Logic App anomaly scheduler (recurrence + query window)
+variable "anomaly_logic_app_name" {
+  description = "Logic App name for scheduled anomaly detection"
+  type        = string
+  default     = "xtdb-bench-anomaly-schedule"
+}
+
+variable "anomaly_schedule_frequency" {
+  description = "Recurrence frequency for anomaly detection (Minute|Hour|Day|Week|Month)"
+  type        = string
+  default     = "Day"
+}
+
+variable "anomaly_schedule_interval" {
+  description = "Recurrence interval for anomaly detection"
+  type        = number
+  default     = 1
+}
+
+variable "anomaly_timespan" {
+  description = "Time span for Logs Query API (ISO8601, e.g., P30D)"
+  type        = string
+  default     = "P30D"
+}
