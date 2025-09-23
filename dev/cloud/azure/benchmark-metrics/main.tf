@@ -207,11 +207,6 @@ resource "azurerm_monitor_action_group" "bench_slack" {
     callback_url            = azapi_resource_action.bench_alert_relay_cb.output.value
     use_common_alert_schema = true
   }
-
-  email_receiver {
-    name           = var.alert_email_receiver_name
-    email_address  = var.alert_email_address
-  }
 }
 
 # Logic App: Scheduled anomaly detection (2σ over P30D via Logs Query API)
@@ -257,7 +252,7 @@ resource "azapi_resource" "bench_anomaly" {
               "body" = {
                 "timespan" = var.anomaly_timespan
                 "query"    = <<-KQL
-                  let N = toint(${var.alert_baseline_n});
+                  let N = toint(${var.anomaly_baseline_n});
                   let latestBenchmark =
                       ${var.table_name}
                       | where step == "overall" and metric == "duration_ms"
@@ -276,8 +271,8 @@ resource "azapi_resource" "bench_anomaly" {
                   latestBenchmark
                     | join kind=inner baseline on k
                     | where isnotnull(baseline_std) and baseline_std > 0
-                    | extend threshold_value_slow = baseline_mean + (${var.alert_sigma} * baseline_std),
-                             threshold_value_fast = baseline_mean - (${var.alert_sigma} * baseline_std)
+                    | extend threshold_value_slow = baseline_mean + (${var.anomaly_sigma} * baseline_std),
+                             threshold_value_fast = baseline_mean - (${var.anomaly_sigma} * baseline_std)
                     | extend slow_violation = current_ms > threshold_value_slow,
                              fast_violation = current_ms < threshold_value_fast
                     | where slow_violation or fast_violation
@@ -321,7 +316,7 @@ resource "azapi_resource" "bench_anomaly" {
                       {
                         "color" = "#D32F2F"
                         "title" = "@{concat('Benchmark anomaly: TPCH ', if(equals(first(body('QueryLogs')?['tables'][0]?['rows'])[1], true), 'ran slower', 'ran faster'))}"
-                        "text"  = "@{concat('*Scale factor:* ', string(${var.alert_scale_factor}), '\n', '*Condition:* ± ', string(${var.alert_sigma}), 'σ over last ', '${var.alert_baseline_n} runs', '\n', '*Run:* <https://github.com/tggreene/xtdb/actions/runs/', string(first(body('QueryLogs')?['tables'][0]?['rows'])[0]), '|', string(first(body('QueryLogs')?['tables'][0]?['rows'])[0]), '>' )}"
+                        "text"  = "@{concat('*Scale factor:* ', string(${var.anomaly_scale_factor}), '\n', '*Condition:* ± ', string(${var.anomaly_sigma}), 'σ over last ', '${var.anomaly_baseline_n} runs', '\n', '*Run:* https://github.com/tggreene/xtdb/actions/runs/', string(first(body('QueryLogs')?['tables'][0]?['rows'])[0]))}"
                         "mrkdwn_in" = ["text"]
                       }
                     ]
@@ -362,7 +357,7 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "bench_missing_ingesti
     query = <<-KQL
       ${var.table_name}
       | where step == "overall" and metric == "duration_ms"
-      | where benchmark == "tpch" and toreal(params.scaleFactor) == ${var.alert_scale_factor}
+      | where benchmark == "tpch" and toreal(params.scaleFactor) == ${var.anomaly_scale_factor}
       | summarize c = count()
       | where c == 0
       | project trigger = 1
@@ -380,7 +375,7 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "bench_missing_ingesti
     action_groups = [azurerm_monitor_action_group.bench_slack.id]
   }
 
-  description = "Alert when no TPC-H scaleFactor=${var.alert_scale_factor} 'overall' rows are ingested within ${var.missing_alert_window_duration}"
+  description = "Alert when no TPC-H scaleFactor=${var.anomaly_scale_factor} 'overall' rows are ingested within ${var.missing_alert_window_duration}"
 }
 
 # Azure Portal Dashboard: 10 most recent runs (line chart)
