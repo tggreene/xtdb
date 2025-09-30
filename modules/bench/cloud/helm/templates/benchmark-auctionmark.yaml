@@ -21,7 +21,8 @@ spec:
         {{- $labels := merge (dict) $user $base -}}
         {{- toYaml $labels | nindent 8 }}
       annotations:
-        "helm.sh/hook": pre-install,pre-upgrade
+        # Run after the release resources (including Kafka) are applied
+        "helm.sh/hook": post-install,post-upgrade
         "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
     spec:
       nodeSelector:

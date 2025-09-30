@@ -1,5 +1,5 @@
-name: Nightly Benchmark TPC-H
-run-name: "TPC-H (SF: ${{ inputs.scale_factor || '1.0' }})"
+name: Nightly Benchmark AuctionMark
+run-name: "AuctionMark (SF: ${{ inputs.scale_factor || '0.1' }}, Duration: ${{ inputs.duration || 'PT10M' }}, Nodes: ${{ inputs.node_count || '3' }})"
 
 on:
   workflow_dispatch:
@@ -7,10 +7,25 @@ on:
       scale_factor:
         description: 'Scale Factor'
         required: false
-        default: '1.0'
+        default: '0.1'
+        type: string
+      duration:
+        description: 'Duration (e.g. PT10M)'
+        required: false
+        default: 'PT30M'
+        type: string
+      threads:
+        description: 'Threads'
+        required: false
+        default: '8'
+        type: string
+      node_count:
+        description: 'Nodes'
+        required: false
+        default: '3'
         type: string
   schedule:
-    - cron: '0 0 * * *'  # Run daily at midnight UTC
+    - cron: '0 2 * * *'  # Run daily at 2am UTC
 
 permissions:
   id-token: write
@@ -18,17 +33,20 @@ permissions:
   actions: write
 
 concurrency:
-  group: nightly-benchmark-tpch
+  group: nightly-benchmark-auctionmark
   cancel-in-progress: false
 
 jobs:
   benchmark:
-    name: "TPC-H (SF: ${{ inputs.scale_factor || '1.0' }})"
+    name: "AuctionMark (SF: ${{ inputs.scale_factor || '0.1' }}, Duration: ${{ inputs.duration || 'PT10M' }}, Nodes: ${{ inputs.node_count || '3' }})"
     runs-on: ubuntu-latest
     if: ${{ github.event_name != 'schedule' || github.repository == 'xtdb/xtdb' }}
-    timeout-minutes: 90
+    timeout-minutes: 150
     env:
-      SCALE_FACTOR: ${{ inputs.scale_factor || '1.0' }}
+      SCALE_FACTOR: ${{ inputs.scale_factor || '0.1' }}
+      DURATION: ${{ inputs.duration || 'PT10M' }}
+      THREADS: ${{ inputs.threads || '8' }}
+      NODE_COUNT: ${{ inputs.node_count || '3' }}
       GRAFANA_ADMIN_PASSWORD: ${{ secrets.BENCHMARK_GRAFANA_ADMIN_PASSWORD }}
 
     steps:
@@ -54,7 +72,7 @@ jobs:
 
       - name: Cancel workflow (existing deployment)
         if: steps.check-deployment.outcome == 'success'
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7
         with:
           script: |
             core.notice('Existing deployment found. Cancelling this workflow run to avoid overlap.');
@@ -84,16 +102,49 @@ jobs:
             --from-literal=GITHUB_PAT="${{ secrets.BENCHMARK_GITHUB_PAT }}" \
             --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: Run Benchmark
+      - name: Phase 1 - Load Only
         if: steps.check-deployment.outcome != 'success'
         run: |
+          set -euo pipefail
           helm dependency update ./modules/bench/cloud/helm
+          # Run load phase WITHOUT mounting the secret so cleanup is not triggered yet
           helm upgrade --install "xtdb-benchmark" ./modules/bench/cloud/helm \
             --namespace "cloud-benchmark" \
             --create-namespace \
             -f ./modules/bench/cloud/azure/values.yaml \
-            --set "benchType=tpch" \
-            --set "tpch.scaleFactor=${{ env.SCALE_FACTOR }}" \
+            --set "benchType=auctionmark" \
+            --set "auctionmark.scaleFactor=${{ env.SCALE_FACTOR }}" \
+            --set "auctionmark.onlyLoad=true" \
+            --set "providerConfig.env.AZURE_USER_MANAGED_IDENTITY_CLIENT_ID=${{ secrets.BENCHMARK_AZURE_USER_MANAGED_IDENTITY_CLIENT_ID }}" \
+            --set "providerConfig.serviceAccountAnnotations.azure\.workload\.identity/client-id=${{ secrets.BENCHMARK_AZURE_USER_MANAGED_IDENTITY_CLIENT_ID }}"
+
+      - name: Ensure Phase 1 Job deleted before Phase 2
+        if: steps.check-deployment.outcome != 'success'
+        run: |
+          set -euo pipefail
+          # Helm hook-delete-policy should remove the job on success, but be explicit to avoid patch conflicts.
+          # First, wait for the job to complete (if it still exists). Tolerate it being already removed.
+          kubectl wait --for=condition=complete job/auctionmark -n cloud-benchmark --timeout=2h || echo "auctionmark job not present or already cleaned up"
+          # Then, delete it to ensure a clean slate for the next phase.
+          kubectl delete job auctionmark -n cloud-benchmark --ignore-not-found=true --wait=true || true
+          sleep 30
+
+      - name: Phase 2 - OLTP
+        if: steps.check-deployment.outcome != 'success'
+        run: |
+          set -euo pipefail
+          helm dependency update ./modules/bench/cloud/helm
+          # Run OLTP phase WITH secret mounted so the job triggers the cleanup workflow on completion
+          helm upgrade --install "xtdb-benchmark" ./modules/bench/cloud/helm \
+            --namespace "cloud-benchmark" \
+            --create-namespace \
+            -f ./modules/bench/cloud/azure/values.yaml \
+            --set "benchType=auctionmark" \
+            --set "auctionmark.scaleFactor=${{ env.SCALE_FACTOR }}" \
+            --set "auctionmark.noLoad=true" \
+            --set "auctionmark.threads=${{ env.THREADS }}" \
+            --set "auctionmark.duration=${{ env.DURATION }}" \
+            --set "auctionmark.nodeCount=${{ env.NODE_COUNT }}" \
             --set "providerConfig.existingSecret=xtdb-bench-secrets" \
             --set "providerConfig.env.AZURE_USER_MANAGED_IDENTITY_CLIENT_ID=${{ secrets.BENCHMARK_AZURE_USER_MANAGED_IDENTITY_CLIENT_ID }}" \
             --set "providerConfig.serviceAccountAnnotations.azure\.workload\.identity/client-id=${{ secrets.BENCHMARK_AZURE_USER_MANAGED_IDENTITY_CLIENT_ID }}"
@@ -115,9 +166,9 @@ jobs:
         if: always()
         run: |
           if [ "${{ steps.check-deployment.outcome }}" = "success" ]; then
-            echo 'msg=:information_source: TPC-H Benchmark skipped — existing deployment found' >> "$GITHUB_OUTPUT"
+            echo 'msg=:information_source: AuctionMark Benchmark skipped — existing deployment found' >> "$GITHUB_OUTPUT"
           else
-            echo 'msg=TPC-H Benchmark (Scale Factor: ${{ env.SCALE_FACTOR }}) started' >> "$GITHUB_OUTPUT"
+            echo 'msg=AuctionMark Benchmark started (SF: ${{ env.SCALE_FACTOR }}, duration: ${{ env.DURATION }}, threads: ${{ env.THREADS }}, nodes: ${{ env.NODE_COUNT }})' >> "$GITHUB_OUTPUT"
           fi
 
       - name: Post Slack Notification
@@ -125,7 +176,7 @@ jobs:
         if: always()
         with:
           status: ${{ job.status }}
-          notification_title: "*TPC-H Benchmark*"
+          notification_title: "*AuctionMark Benchmark*"
           message_format: "${{ steps.compose.outputs.msg }}"
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.BENCHMARK_SLACK_WEBHOOK_URL }}
