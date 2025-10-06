@@ -86,17 +86,32 @@ jobs:
 
           # If all benchmark pods are already in a terminal error state, don't block waiting
           sel='-l app.kubernetes.io/name=xtdb,app.kubernetes.io/component=benchmark'
+          echo "[DEBUG] Using selector: $sel in namespace: $NS"
+          echo "[DEBUG] Current pods (name, phase):"
+          kubectl get pods -n "$NS" $sel -o=custom-columns=NAME:.metadata.name,PHASE:.status.phase --no-headers || true
+          echo "[DEBUG] Raw pod phases:"
+          kubectl get pods -n "$NS" $sel -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.phase}{"\n"}{end}' || true
           failed_cnt=$(kubectl get pods -n "$NS" $sel --field-selector=status.phase=Failed --no-headers 2>/dev/null | wc -l | tr -d ' ')
           nonterminal_cnt=$(kubectl get pods -n "$NS" $sel --field-selector=status.phase!=Succeeded,status.phase!=Failed --no-headers 2>/dev/null | wc -l | tr -d ' ')
+          echo "[DEBUG] Counts: nonterminal_cnt=${nonterminal_cnt:-0} failed_cnt=${failed_cnt:-0}"
           if [ "${nonterminal_cnt:-0}" = "0" ] && [ "${failed_cnt:-0}" -gt 0 ]; then
             echo "All benchmark pods are in Failed state; skipping waits."
           else
           # Wait for the benchmark Job (tpch/auctionmark/readings) to complete if present
           if kubectl get job "$JOB" -n "$NS" >/dev/null 2>&1; then
             echo "Waiting for job/$JOB to complete..."
-            kubectl wait --for=condition=complete "job/$JOB" -n "$NS" --timeout=2h || {
-              echo "job/$JOB did not complete within timeout; continuing to collect logs anyway" >&2
-            }
+            # Check job conditions first to avoid blocking when it has already Failed or Completed
+            COMPLETE=$(kubectl get job "$JOB" -n "$NS" -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' || true)
+            FAILED=$(kubectl get job "$JOB" -n "$NS" -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' || true)
+            if [ "$COMPLETE" = "True" ]; then
+              echo "job/$JOB already complete; skipping wait"
+            elif [ "$FAILED" = "True" ]; then
+              echo "job/$JOB has Failed; skipping wait"
+            else
+              kubectl wait --for=condition=complete "job/$JOB" -n "$NS" --timeout=2h || {
+                echo "job/$JOB did not complete within timeout; continuing to collect logs anyway" >&2
+              }
+            fi
           else
             echo "job/$JOB not found in namespace $NS; continuing"
           fi
@@ -113,6 +128,10 @@ jobs:
               break
             fi
             echo "Waiting for benchmark pods to complete... ($i) remaining=$remaining"
+            echo "[DEBUG] Non-terminal pods (name, phase):"
+            kubectl get pods -n "$NS" -l app.kubernetes.io/name=xtdb,app.kubernetes.io/component=benchmark \
+              --field-selector=status.phase!=Succeeded,status.phase!=Failed \
+              -o=custom-columns=NAME:.metadata.name,PHASE:.status.phase --no-headers || true
             sleep 4
           done
           fi
