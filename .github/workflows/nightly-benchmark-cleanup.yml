@@ -429,17 +429,17 @@ jobs:
         if: steps.check-deployment.outcome == 'success'
         run: |
           set -euo pipefail
-          # Determine the XTDB node id (pod name) to use for var-xtdbnode
-          XTDB_NODE_ID=$(kubectl get pods -n cloud-benchmark -l app.kubernetes.io/component=benchmark,app.kubernetes.io/name=xtdb -o jsonpath='{.items[0].metadata.name}' || true)
-          if [ -z "$XTDB_NODE_ID" ]; then
+          # Determine all XTDB node ids (pod names) to use for var-xtdbnode
+          PODS=$(kubectl get pods -n cloud-benchmark -l app.kubernetes.io/component=benchmark,app.kubernetes.io/name=xtdb -o jsonpath='{.items[*].metadata.name}' || true)
+          if [ -z "$PODS" ]; then
             # Fallback via plain text parsing
-            XTDB_NODE_ID=$(kubectl get pods -n cloud-benchmark -l app.kubernetes.io/component=benchmark,app.kubernetes.io/name=xtdb -o name | head -n1 | sed 's#.*/##')
+            PODS=$(kubectl get pods -n cloud-benchmark -l app.kubernetes.io/component=benchmark,app.kubernetes.io/name=xtdb -o name | sed 's#.*/##' || true)
           fi
-          if [ -z "$XTDB_NODE_ID" ]; then
-            echo "Failed to determine XTDB_NODE_ID; skipping node debugging panel rendering"
+          if [ -z "$PODS" ]; then
+            echo "Failed to determine benchmark pods; skipping node debugging panel rendering"
             exit 0
           fi
-          echo "Using XTDB_NODE_ID=$XTDB_NODE_ID"
+          echo "Rendering node debugging panels for pods: $PODS"
 
           mkdir -p grafana-panels
           DASHBOARD_UID="edznf2lfly22o1aa" # XTDB: Node Debugging Dashboard
@@ -474,12 +474,14 @@ jobs:
             echo "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g'
           }
 
-          for title in "${!PANELS[@]}"; do
-            panelId="${PANELS[$title]}"
-            file="grafana-panels/node-$(slugify "$title").png"
-            url="http://localhost:3000/render/d-solo/${DASHBOARD_UID}/${SLUG}?panelId=${panelId}&orgId=1&from=${FROM}&to=${TO}&width=${WIDTH}&height=${HEIGHT}&tz=UTC&var-xtdbnode=${XTDB_NODE_ID}"
-            echo "Rendering [Node Debug] $title (panelId=${panelId}, xtdbnode=${XTDB_NODE_ID}) -> $file"
-            curl -sS -f -L -u "admin:${GRAFANA_ADMIN_PASSWORD}" -H 'Accept: image/png' "$url" -o "$file" || echo "Failed to render node panel $title"
+          for node in $PODS; do
+            for title in "${!PANELS[@]}"; do
+              panelId="${PANELS[$title]}"
+              file="grafana-panels/${node}-node-$(slugify "$title").png"
+              url="http://localhost:3000/render/d-solo/${DASHBOARD_UID}/${SLUG}?panelId=${panelId}&orgId=1&from=${FROM}&to=${TO}&width=${WIDTH}&height=${HEIGHT}&tz=UTC&var-xtdbnode=${node}"
+              echo "Rendering [Node Debug] $title (panelId=${panelId}, xtdbnode=${node}) -> $file"
+              curl -sS -f -L -u "admin:${GRAFANA_ADMIN_PASSWORD}" -H 'Accept: image/png' "$url" -o "$file" || echo "Failed to render node panel $title for ${node}"
+            done
           done
 
       - name: Upload Grafana Panels
