@@ -211,8 +211,18 @@
                                   (loop [wait-until (+ (current-timestamp-ms worker) (.toMillis duration))]
                                     (f worker)
                                     (when (< (current-timestamp-ms worker) wait-until)
-                                      (sleep)
-                                      (recur wait-until))))
+                                      (let [slept? (try
+                                                     (sleep)
+                                                     true
+                                                     (catch InterruptedException e
+                                                       ;; Restore interrupt flag so upstream can observe it
+                                                       (.interrupt (Thread/currentThread))
+                                                       ;; Only swallow if shutdown in progress, otherwise rethrow
+                                                       (if (or (.isShutdown executor) (.isTerminated executor))
+                                                         false
+                                                         (throw e))))]
+                                        (when slept?
+                                          (recur wait-until))))))
 
                     start-thread (fn [root-worker _i]
                                    (let [bindings (get-thread-bindings)
@@ -241,8 +251,9 @@
                             (log/error cause "Benchmark worker failed in :pool" {:task task})
                             (throw (ex-info "Benchmark worker failed" {:task task} cause))))
                         (catch InterruptedException e
-                          (log/error e "Interrupted while awaiting worker completion in :pool" {:task task})
-                          (throw (ex-info "Interrupted while awaiting worker completion" {:task task} e))))))))
+                          ;; Restore flag and treat as shutdown while returning control
+                          (.interrupt (Thread/currentThread))
+                          (log/info e "Interrupted while awaiting worker completion in :pool (treating as shutdown)" {:task task})))))))
 
         :concurrently (let [{:keys [^Duration duration, ^Duration join-wait, thread-tasks]} task
                             thread-task-fns (mapv compile-task thread-tasks)
@@ -274,8 +285,9 @@
                                     (log/error cause "Benchmark worker failed in :concurrently" {:task task})
                                     (throw (ex-info "Benchmark worker failed" {:task task} cause))))
                                 (catch InterruptedException e
-                                  (log/error e "Interrupted while awaiting worker completion in :concurrently" {:task task})
-                                  (throw (ex-info "Interrupted while awaiting worker completion" {:task task} e))))))))
+                                  ;; Restore flag and treat as shutdown while returning control
+                                  (.interrupt (Thread/currentThread))
+                                  (log/info e "Interrupted while awaiting worker completion in :concurrently (treating as shutdown)" {:task task})))))))
 
         :pick-weighted (let [{:keys [choices]} task
                              sample-fn (weighted-sample-fn (mapv (fn [[weight task]] [(compile-task task) weight]) choices))]
@@ -296,8 +308,18 @@
                       (loop [wait-until (+ (current-timestamp-ms worker) duration-ms)]
                         (f worker)
                         (when (< (current-timestamp-ms worker) wait-until)
-                          (sleep)
-                          (recur wait-until))))))
+                          (let [slept? (try
+                                         (sleep)
+                                         true
+                                         (catch InterruptedException e
+                                           ;; Restore interrupt flag
+                                           (.interrupt (Thread/currentThread))
+                                           ;; Only swallow if we've reached/passed the intended end time
+                                           (if (>= (current-timestamp-ms worker) wait-until)
+                                             false
+                                             (throw e))))]
+                            (when slept?
+                              (recur wait-until))))))))
 
       (wrap-task task)))
 
