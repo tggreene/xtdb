@@ -297,6 +297,13 @@ jobs:
           JSON
           echo "Generated metrics.json:" && cat metrics.json
 
+      - name: Azure CLI Re-Login (refresh OIDC)
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
+        with:
+          client-id: ${{ secrets.BENCHMARK_AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.BENCHMARK_AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.BENCHMARK_AZURE_SUBSCRIPTION_ID }}
+
       - name: Post metrics to Azure Monitor
         if: steps.check-deployment.outcome == 'success' && inputs.status == 'success' && steps.logs.outputs.time_taken != ''
         env:
