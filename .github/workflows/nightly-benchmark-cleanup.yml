@@ -148,25 +148,47 @@ jobs:
           primary_log=""
           for pod in $pods; do
             attempts=0
-            until kubectl logs "$pod" -n "$NS" > "pod-logs/$pod.log" 2>/dev/null || [ $attempts -ge 12 ]; do
+            # Try primary container logs explicitly, with retries (handles pods that are still terminating)
+            until kubectl logs "$pod" -n "$NS" -c xtdb-node > "pod-logs/$pod.log" 2>/dev/null || \
+                  kubectl logs "$pod" -n "$NS" > "pod-logs/$pod.log" 2>/dev/null || \
+                  [ $attempts -ge 12 ]; do
               attempts=$((attempts+1))
               echo "Waiting for logs from $pod (attempt $attempts)..."
               sleep 5
             done
-            if [ -z "$primary_log" ] && [ -s "pod-logs/$pod.log" ]; then
-              cp "pod-logs/$pod.log" benchmark.log || true
-              primary_log="$pod"
+
+            # If empty or unavailable, try previous logs (in case of restarts)
+            if [ ! -s "pod-logs/$pod.log" ]; then
+              kubectl logs "$pod" -n "$NS" -c xtdb-node --previous > "pod-logs/$pod.previous.log" 2>/dev/null || \
+              kubectl logs "$pod" -n "$NS" --previous > "pod-logs/$pod.previous.log" 2>/dev/null || true
             fi
-            if [ -s "pod-logs/$pod.log" ]; then
+
+            # If still nothing, capture describe for diagnostics
+            if [ ! -s "pod-logs/$pod.log" ] && [ ! -s "pod-logs/$pod.previous.log" ]; then
+              kubectl describe pod "$pod" -n "$NS" > "pod-logs/$pod.describe.txt" 2>/dev/null || true
+            fi
+            # Choose a primary log for convenience (use previous if primary absent)
+            if [ -z "$primary_log" ]; then
+              src_for_primary=""
+              if [ -s "pod-logs/$pod.log" ]; then src_for_primary="pod-logs/$pod.log"; fi
+              if [ -z "$src_for_primary" ] && [ -s "pod-logs/$pod.previous.log" ]; then src_for_primary="pod-logs/$pod.previous.log"; fi
+              if [ -n "$src_for_primary" ]; then
+                cp "$src_for_primary" benchmark.log || true
+                primary_log="$pod"
+              fi
+            fi
+            if [ -s "pod-logs/$pod.log" ] || [ -s "pod-logs/$pod.previous.log" ]; then
               # Extract last time-taken-ms in this pod's log
-              pod_ms=$(grep -o '"time-taken-ms":[0-9]\+' "pod-logs/$pod.log" | tail -1 | cut -d: -f2 || true)
+              src_log="pod-logs/$pod.log"
+              [ -s "pod-logs/$pod.log" ] || src_log="pod-logs/$pod.previous.log"
+              pod_ms=$(grep -o '"time-taken-ms":[0-9]\+' "$src_log" | tail -1 | cut -d: -f2 || true)
               if [ -n "$pod_ms" ]; then
                 total_ms=$((total_ms + pod_ms))
                 count_ms=$((count_ms + 1))
               fi
               # Capture params EDN once (supports tpch or auctionmark namespaces in loggers)
               if [ -z "${{ steps.logs.outputs.params_edn || '' }}" ]; then
-                params_line=$(grep -m1 -E 'INFO[[:space:]]+xtdb\.bench\.(tpch|auctionmark)[[:space:]]+-[[:space:]]+\{.*\}' "pod-logs/$pod.log" || true)
+                params_line=$(grep -m1 -E 'INFO[[:space:]]+xtdb\.bench\.(tpch|auctionmark)[[:space:]]+-[[:space:]]+\{.*\}' "$src_log" || true)
                 if [ -n "$params_line" ]; then
                   params_edn=$(echo "$params_line" | sed -E 's/.*INFO[[:space:]]+xtdb\.bench\.(tpch|auctionmark)[[:space:]]+-[[:space:]]+(\{.*\}).*/\2/')
                   {
