@@ -8,4 +8,8 @@
         <appender-ref ref="STDOUT" />
     </root>
     <logger name="xtdb" level="INFO" />
+    <!-- Enable verbose Netty logging (including leak detector) and Arrow allocator diagnostics -->
+    <logger name="io.netty" level="DEBUG" />
+    <logger name="io.netty.util.ResourceLeakDetector" level="DEBUG" />
+    <logger name="org.apache.arrow.memory" level="DEBUG" />
 </configuration>

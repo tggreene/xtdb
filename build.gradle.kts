@@ -32,7 +32,7 @@ val defaultJvmArgs = listOf(
     "--enable-native-access=ALL-UNNAMED",
     "-Dio.netty.tryReflectionSetAccessible=true",
     "-Djdk.attach.allowAttachSelf",
-    "-Darrow.memory.debug.allocator=false",
+    "-Darrow.memory.debug.allocator=true",
     "-XX:-OmitStackTraceInFastThrow",
     "-Dlogback.configurationFile=${rootDir.resolve("src/testFixtures/resources/logback-test.xml")}",
     "-Dxtdb.rootDir=$rootDir",
