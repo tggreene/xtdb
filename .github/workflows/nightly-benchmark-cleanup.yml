@@ -94,19 +94,32 @@ jobs:
           else
           # Wait for the benchmark Job (tpch/auctionmark/readings) to complete if present
           if kubectl get job "$JOB" -n "$NS" >/dev/null 2>&1; then
-            echo "Waiting for job/$JOB to complete..."
-            # Check job conditions first to avoid blocking when it has already Failed or Completed
-            COMPLETE=$(kubectl get job "$JOB" -n "$NS" -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' || true)
-            FAILED=$(kubectl get job "$JOB" -n "$NS" -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' || true)
-            if [ "$COMPLETE" = "True" ]; then
-              echo "job/$JOB already complete; skipping wait"
-            elif [ "$FAILED" = "True" ]; then
-              echo "job/$JOB has Failed; skipping wait"
-            else
-              kubectl wait --for=condition=complete "job/$JOB" -n "$NS" --timeout=2h || {
-                echo "job/$JOB did not complete within timeout; continuing to collect logs anyway" >&2
-              }
-            fi
+            echo "Polling job/$JOB until Complete or Failed..."
+            # Poll up to ~2h (720 * 10s)
+            for i in $(seq 1 720); do
+              COMPLETE=$(kubectl get job "$JOB" -n "$NS" -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' || true)
+              FAILED=$(kubectl get job "$JOB" -n "$NS" -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' || true)
+              if [ "$COMPLETE" = "True" ]; then
+                echo "job/$JOB Complete"
+                break
+              fi
+              if [ "$FAILED" = "True" ]; then
+                echo "job/$JOB Failed"
+                break
+              fi
+
+              # Optional: stop early if all benchmark pods are terminal
+              remaining=$(kubectl get pods -n "$NS" \
+                -l app.kubernetes.io/name=xtdb,app.kubernetes.io/component=benchmark \
+                --field-selector=status.phase!=Succeeded,status.phase!=Failed \
+                --no-headers 2>/dev/null | wc -l | tr -d ' ')
+              if [ "${remaining:-0}" = "0" ]; then
+                echo "All benchmark pods are terminal; stopping job wait"
+                break
+              fi
+
+              sleep 10
+            done
           else
             echo "job/$JOB not found in namespace $NS; continuing"
           fi
