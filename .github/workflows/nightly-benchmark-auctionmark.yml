@@ -102,46 +102,19 @@ jobs:
             --from-literal=GITHUB_PAT="${{ secrets.BENCHMARK_GITHUB_PAT }}" \
             --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: Phase 1 - Load Only
+      - name: Run AuctionMark (Load + OLTP)
         if: steps.check-deployment.outcome != 'success'
         run: |
           set -euo pipefail
           helm dependency update ./modules/bench/cloud/helm
-          # Run load phase WITHOUT mounting the secret so cleanup is not triggered yet
+          # Single invocation that performs load then OLTP, mirroring CLI flags
+          # Equivalent to: ./cloud/run-bench.sh azure auctionmark --set auctionmark.threads=... --set auctionmark.duration=... --set auctionmark.scaleFactor=...
           helm upgrade --install "xtdb-benchmark" ./modules/bench/cloud/helm \
             --namespace "cloud-benchmark" \
             --create-namespace \
             -f ./modules/bench/cloud/azure/values.yaml \
             --set "benchType=auctionmark" \
             --set "auctionmark.scaleFactor=${{ env.SCALE_FACTOR }}" \
-            --set "auctionmark.onlyLoad=true" \
-            --set "providerConfig.env.AZURE_USER_MANAGED_IDENTITY_CLIENT_ID=${{ secrets.BENCHMARK_AZURE_USER_MANAGED_IDENTITY_CLIENT_ID }}" \
-            --set "providerConfig.serviceAccountAnnotations.azure\.workload\.identity/client-id=${{ secrets.BENCHMARK_AZURE_USER_MANAGED_IDENTITY_CLIENT_ID }}"
-
-      - name: Ensure Phase 1 Job deleted before Phase 2
-        if: steps.check-deployment.outcome != 'success'
-        run: |
-          set -euo pipefail
-          # Helm hook-delete-policy should remove the job on success, but be explicit to avoid patch conflicts.
-          # First, wait for the job to complete (if it still exists). Tolerate it being already removed.
-          kubectl wait --for=condition=complete job/auctionmark -n cloud-benchmark --timeout=2h || echo "auctionmark job not present or already cleaned up"
-          # Then, delete it to ensure a clean slate for the next phase.
-          kubectl delete job auctionmark -n cloud-benchmark --ignore-not-found=true --wait=true || true
-          sleep 30
-
-      - name: Phase 2 - OLTP
-        if: steps.check-deployment.outcome != 'success'
-        run: |
-          set -euo pipefail
-          helm dependency update ./modules/bench/cloud/helm
-          # Run OLTP phase WITH secret mounted so the job triggers the cleanup workflow on completion
-          helm upgrade --install "xtdb-benchmark" ./modules/bench/cloud/helm \
-            --namespace "cloud-benchmark" \
-            --create-namespace \
-            -f ./modules/bench/cloud/azure/values.yaml \
-            --set "benchType=auctionmark" \
-            --set "auctionmark.scaleFactor=${{ env.SCALE_FACTOR }}" \
-            --set "auctionmark.noLoad=true" \
             --set "auctionmark.threads=${{ env.THREADS }}" \
             --set "auctionmark.duration=${{ env.DURATION }}" \
             --set "auctionmark.nodeCount=${{ env.NODE_COUNT }}" \
