@@ -1,5 +1,5 @@
 name: Nightly Benchmark AuctionMark
-run-name: "AuctionMark (SF: ${{ inputs.scale_factor || '0.1' }}, Duration: ${{ inputs.duration || 'PT10M' }}, Nodes: ${{ inputs.node_count || '3' }})"
+run-name: "AuctionMark (SF: ${{ inputs.scale_factor || '0.1' }}, Duration: ${{ inputs.duration || 'PT30M' }}, Nodes: ${{ inputs.node_count || '3' }})"
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ on:
         default: '0.1'
         type: string
       duration:
-        description: 'Duration (e.g. PT10M)'
+        description: 'Duration (e.g. PT30M)'
         required: false
         default: 'PT30M'
         type: string
