@@ -1,0 +1,155 @@
+name: Nightly Benchmark AuctionMark
+run-name: "AuctionMark (SF: ${{ inputs.scale_factor || '0.1' }}, Duration: ${{ inputs.duration || 'PT30M' }}, Nodes: ${{ inputs.node_count || '3' }})"
+
+on:
+  workflow_dispatch:
+    inputs:
+      scale_factor:
+        description: 'Scale Factor'
+        required: false
+        default: '0.1'
+        type: string
+      duration:
+        description: 'Duration (e.g. PT30M)'
+        required: false
+        default: 'PT30M'
+        type: string
+      threads:
+        description: 'Threads'
+        required: false
+        default: '8'
+        type: string
+      node_count:
+        description: 'Nodes'
+        required: false
+        default: '3'
+        type: string
+  schedule:
+    - cron: '0 2 * * *'  # Run daily at 2am UTC
+
+permissions:
+  id-token: write
+  contents: read
+  actions: write
+
+concurrency:
+  group: nightly-benchmark-auctionmark
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    name: "AuctionMark (SF: ${{ inputs.scale_factor || '0.1' }}, Duration: ${{ inputs.duration || 'PT10M' }}, Nodes: ${{ inputs.node_count || '3' }})"
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'schedule' || github.repository == 'xtdb/xtdb' }}
+    timeout-minutes: 150
+    env:
+      SCALE_FACTOR: ${{ inputs.scale_factor || '0.1' }}
+      DURATION: ${{ inputs.duration || 'PT10M' }}
+      THREADS: ${{ inputs.threads || '8' }}
+      NODE_COUNT: ${{ inputs.node_count || '3' }}
+      GRAFANA_ADMIN_PASSWORD: ${{ secrets.BENCHMARK_GRAFANA_ADMIN_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+
+      - name: Azure CLI Login
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
+        with:
+          client-id: ${{ secrets.BENCHMARK_AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.BENCHMARK_AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.BENCHMARK_AZURE_SUBSCRIPTION_ID }}
+
+      - name: Acquire Kubernetes Configuration
+        run: |
+          az aks get-credentials --resource-group cloud-benchmark-resources --name xtdb-bench-cluster
+
+      - name: Check Existing Deployment
+        id: check-deployment
+        continue-on-error: true
+        run: |
+          # exit 0 if exists, non-zero if not
+          helm status xtdb-benchmark -n cloud-benchmark >/dev/null 2>&1
+
+      - name: Cancel workflow (existing deployment)
+        if: steps.check-deployment.outcome == 'success'
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7
+        with:
+          script: |
+            core.notice('Existing deployment found. Cancelling this workflow run to avoid overlap.');
+            await github.rest.actions.cancelWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.runId,
+            });
+
+      - name: Stop job after cancellation
+        if: steps.check-deployment.outcome == 'success'
+        run: |
+          echo "Workflow cancellation requested due to existing deployment. Stopping job."
+          exit 0
+
+      - name: Install Monitoring Stack
+        if: steps.check-deployment.outcome != 'success'
+        continue-on-error: true
+        run: |
+          bash ./modules/bench/cloud/monitoring/install-monitoring.sh
+
+      - name: Create Bench Secret (GITHUB_PAT)
+        if: steps.check-deployment.outcome != 'success'
+        run: |
+          set -euo pipefail
+          kubectl -n cloud-benchmark create secret generic xtdb-bench-secrets \
+            --from-literal=GITHUB_PAT="${{ secrets.BENCHMARK_GITHUB_PAT }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Run AuctionMark (Load + OLTP)
+        if: steps.check-deployment.outcome != 'success'
+        run: |
+          set -euo pipefail
+          helm dependency update ./modules/bench/cloud/helm
+          # Single invocation that performs load then OLTP, mirroring CLI flags
+          # Equivalent to: ./cloud/run-bench.sh azure auctionmark --set auctionmark.threads=... --set auctionmark.duration=... --set auctionmark.scaleFactor=...
+          helm upgrade --install "xtdb-benchmark" ./modules/bench/cloud/helm \
+            --namespace "cloud-benchmark" \
+            --create-namespace \
+            -f ./modules/bench/cloud/azure/values.yaml \
+            --set "benchType=auctionmark" \
+            --set "auctionmark.scaleFactor=${{ env.SCALE_FACTOR }}" \
+            --set "auctionmark.threads=${{ env.THREADS }}" \
+            --set "auctionmark.duration=${{ env.DURATION }}" \
+            --set "auctionmark.nodeCount=${{ env.NODE_COUNT }}" \
+            --set "providerConfig.existingSecret=xtdb-bench-secrets" \
+            --set "providerConfig.env.AZURE_USER_MANAGED_IDENTITY_CLIENT_ID=${{ secrets.BENCHMARK_AZURE_USER_MANAGED_IDENTITY_CLIENT_ID }}" \
+            --set "providerConfig.serviceAccountAnnotations.azure\.workload\.identity/client-id=${{ secrets.BENCHMARK_AZURE_USER_MANAGED_IDENTITY_CLIENT_ID }}"
+
+      - name: Remove Monitoring Stack on Failure
+        if: failure() && steps.check-deployment.outcome != 'success'
+        run: |
+          if helm status monitoring -n monitoring >/dev/null 2>&1; then
+            echo "Uninstalling monitoring stack due to benchmark failure..."
+            helm uninstall monitoring -n monitoring || true
+            # Attempt to delete the namespace (ignore if it contains other resources or is already gone)
+            kubectl delete namespace monitoring --ignore-not-found=true || true
+          else
+            echo "Monitoring stack not found; skipping."
+          fi
+
+      - name: Compose Slack Message
+        id: compose
+        if: always()
+        run: |
+          if [ "${{ steps.check-deployment.outcome }}" = "success" ]; then
+            echo 'msg=:information_source: AuctionMark Benchmark skipped — existing deployment found' >> "$GITHUB_OUTPUT"
+          else
+            echo 'msg=AuctionMark Benchmark started (SF: ${{ env.SCALE_FACTOR }}, duration: ${{ env.DURATION }}, threads: ${{ env.THREADS }}, nodes: ${{ env.NODE_COUNT }})' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Post Slack Notification
+        uses: ravsamhq/notify-slack-action@be814b201e233b2dc673608aa46e5447c8ab13f2 # v2
+        if: always()
+        with:
+          status: ${{ job.status }}
+          notification_title: "*AuctionMark Benchmark*"
+          message_format: "${{ steps.compose.outputs.msg }}"
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.BENCHMARK_SLACK_WEBHOOK_URL }}
