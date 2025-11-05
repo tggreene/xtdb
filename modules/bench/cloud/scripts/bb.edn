@@ -1,0 +1,30 @@
+{:min-bb-version "1.3.180"
+
+ :paths ["src"]
+
+ :tasks
+ {:requires [[babashka.fs :as fs]
+             [xtdb.bench.cloud.scripts.tasks :as tasks]]
+
+  :init (tasks/install-logging!)
+
+  describe {:doc "Show the available tasks and their docs"
+            :task (tasks/describe)}
+
+  hello {:doc "Say hello and show the configured environment"
+         :task (tasks/hello)}
+
+  ensure-dirs {:doc "Ensure the demo output directories exist"
+               :task (tasks/ensure-dirs)}
+
+  cleanup {:doc "Remove the demo output directories created during ensure-dirs"
+           :task (tasks/cleanup)}
+
+  shell {:doc "Run an arbitrary shell command via bb shell -- ls -al"
+         :task (tasks/run-shell *command-line-args*)}
+
+  files {:doc "List files in the scripts directory"
+         :task (tasks/list-files (fs/cwd))}
+
+  default {:doc "Default task that shows help"
+           :depends [describe]}}}
