@@ -640,9 +640,15 @@ jobs:
             base="$type Benchmark cleanup — {status_message}"
           fi
 
+          BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-${GITHUB_REF##*/}}}"
+          COMMIT_FULL="${GITHUB_SHA:-unknown}"
+          COMMIT_SHORT="${COMMIT_FULL:0:12}"
+
           {
             echo "msg<<EOF"
             echo "$base"
+            echo "Branch: $BRANCH"
+            echo "Commit: $COMMIT_SHORT"
             if [ "${{ steps.upload-logs.outcome }}" = "success" ] || [ "${{ steps.upload-grafana.outcome }}" = "success" ]; then
               echo ":link: <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|view artifacts>"
             else
