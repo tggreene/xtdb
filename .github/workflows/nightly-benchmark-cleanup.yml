@@ -551,6 +551,37 @@ jobs:
             rm -f /tmp/grafana-pf.pid
           fi
 
+      - name: Gather Benchmark Image
+        id: image-info
+        if: steps.check-deployment.outcome == 'success'
+        run: |
+          set -euo pipefail
+          NS="cloud-benchmark"
+          pod=$(kubectl get pods -n "$NS" -l app.kubernetes.io/name=xtdb,app.kubernetes.io/component=benchmark -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+          if [ -z "$pod" ]; then
+            echo "image=" >> "$GITHUB_OUTPUT"
+            echo "image_repo=" >> "$GITHUB_OUTPUT"
+            echo "image_tag=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          image=$(kubectl get pod "$pod" -n "$NS" -o jsonpath='{.spec.containers[?(@.name=="xtdb-node")].image}' 2>/dev/null || true)
+          if [ -z "$image" ]; then
+            echo "image=" >> "$GITHUB_OUTPUT"
+            echo "image_repo=" >> "$GITHUB_OUTPUT"
+            echo "image_tag=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$image" == *:* ]]; then
+            repo="${image%:*}"
+            tag="${image##*:}"
+          else
+            repo="$image"
+            tag=""
+          fi
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+          echo "image_repo=${repo}" >> "$GITHUB_OUTPUT"
+          echo "image_tag=${tag}" >> "$GITHUB_OUTPUT"
+
       - name: Run Cleanup Script
         if: ${{ always() && steps.check-deployment.outcome == 'success' }}
         run: |
@@ -640,15 +671,14 @@ jobs:
             base="$type Benchmark cleanup — {status_message}"
           fi
 
-          BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-${GITHUB_REF##*/}}}"
-          COMMIT_FULL="${GITHUB_SHA:-unknown}"
-          COMMIT_SHORT="${COMMIT_FULL:0:12}"
+          IMAGE="${{ steps.image-info.outputs.image || '' }}"
 
           {
             echo "msg<<EOF"
             echo "$base"
-            echo "Branch: $BRANCH"
-            echo "Commit: $COMMIT_SHORT"
+            if [ -n "$IMAGE" ]; then
+              echo "Image: $IMAGE"
+            fi
             if [ "${{ steps.upload-logs.outcome }}" = "success" ] || [ "${{ steps.upload-grafana.outcome }}" = "success" ]; then
               echo ":link: <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|view artifacts>"
             else
