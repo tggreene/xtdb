@@ -2,6 +2,9 @@ name: Test Hello World
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - test/github-actions
 
 jobs:
   hello:
@@ -9,4 +12,5 @@ jobs:
     steps:
       - name: Echo greeting
         run: echo "Hello world"
-
+      - name: Echo greeting again
+        run: echo "Hello world"
