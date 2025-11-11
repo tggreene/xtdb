@@ -1,8 +1,9 @@
- (ns xtdb.bench.cloud.scripts.tasks
-   (:require [babashka.process :as process]
-             [cheshire.core :as json]
-             [clojure.pprint :as pprint]
-             [clojure.string :as str]))
+(ns bench-tasks
+  (:require [babashka.cli :as cli]
+            [babashka.process :as process]
+            [cheshire.core :as json]
+            [clojure.pprint :as pprint]
+            [clojure.string :as str]))
 
 (defn kubectl
   [& args]
@@ -246,26 +247,38 @@
     {:rows rows-with-percent
      :total-ms total-ms}))
 
-(defn print-query-table
-  "Print the query rows in a table format, followed by the total."
+(defn summary->table
+  "Return the query rows as a human-readable table followed by totals."
   [summary]
   (let [{:keys [rows total-ms]} (query-rows summary)]
     (if (seq rows)
-      (do
-        (pprint/print-table [:temp :q :query-name :time-taken-ms :time-taken-duration :percent-of-total] rows)
-        (println)
-        (println (format "Total query time: %d ms (%s)" total-ms (.toString (java.time.Duration/ofMillis total-ms))))
+      (let [sb (StringBuilder.)
+            table-str (-> (with-out-str
+                            (pprint/print-table [:temp :q :query-name :time-taken-ms :time-taken-duration :percent-of-total] rows))
+                          str/trim)]
+        (.append sb table-str)
+        (.append sb \newline)
+        (.append sb (format "Total query time: %d ms (%s)"
+                            total-ms
+                            (.toString (java.time.Duration/ofMillis total-ms))))
         (when-let [benchmark (:benchmark-total-time-ms summary)]
-          (println (format "Benchmark total time: %d ms (%s)" benchmark (.toString (java.time.Duration/ofMillis benchmark))))))
-      (println "No query stages found."))))
+          (.append sb \newline)
+          (.append sb (format "Benchmark total time: %d ms (%s)"
+                              benchmark
+                              (.toString (java.time.Duration/ofMillis benchmark)))))
+        (.append sb \newline)
+        (str sb))
+      "No query stages found.")))
 
-(defn slack-query-table
+(defn summary->slack
   "Return the query table as a Slack-friendly code block."
   [summary]
-  (str "```\n" (with-out-str (print-query-table summary)) "```"))
+  (str "```\n"
+       (str/trimr (summary->table summary))
+       "\n```"))
 
-(defn github-query-table
-  "Render the query table as GitHub Actions summary Markdown."
+(defn summary->github-markdown
+  "Render the summary as GitHub/Markdown table output."
   [summary]
   (let [{:keys [rows total-ms]} (query-rows summary)
         benchmark (:benchmark-total-time-ms summary)]
@@ -292,29 +305,96 @@
                (str "\n" benchmark-line))))
       "No query stages found.")))
 
+(defn load-summary
+  [benchmark-type log-file-path]
+  (case benchmark-type
+    "tpch" (parse-tpch-log log-file-path)
+    (throw (ex-info (format "Unsupported benchmark type: %s" benchmark-type)
+                    {:benchmark-type benchmark-type}))))
+
+(def format-aliases
+  {:table :table
+   :console :table
+   :slack :slack
+   :code :slack
+   :codeblock :slack
+   :github :github
+   :markdown :github})
+
+(defn normalize-format
+  [format]
+  (let [fmt (cond
+              (keyword? format) format
+              (string? format) (keyword (str/lower-case format))
+              :else format)
+        fmt (or fmt :table)
+        normalized (get format-aliases fmt)]
+    (or normalized
+        (throw (ex-info (format "Unsupported format: %s" (name fmt))
+                        {:format fmt
+                         :supported (->> format-aliases
+                                         vals
+                                         distinct
+                                         sort
+                                         (map name))})))))
+
+(defn render-summary
+  [summary {:keys [format]}]
+  (let [fmt (normalize-format format)]
+    (case fmt
+      :table (summary->table summary)
+      :slack (summary->slack summary)
+      :github (summary->github-markdown summary))))
+
 (defn summarize-log
   [args]
-  (let [[benchmark-type log-file-path] args]
-    (case benchmark-type
-      "tpch" (let [summary (parse-tpch-log log-file-path)]
-               (print-query-table summary))
-      (throw (ex-info (format "Unsupported benchmark type: %s" benchmark-type) {:benchmark-type benchmark-type})))))
-
-(defn append-github-summary!
-  "Append the query table to the GitHub Actions step summary, if available."
-  [summary]
-  (if-let [summary-path (System/getenv "GITHUB_STEP_SUMMARY")]
-    (spit summary-path
-          (str "\n" (github-query-table summary) "\n")
-          :append true)
-    (println "GITHUB_STEP_SUMMARY not set; skipping summary append.")))
+  (let [{:keys [args opts]} (cli/parse-args args {:coerce {:format keyword}})
+        [benchmark-type log-file-path & extra] args
+        format (:format opts)]
+    (when (seq extra)
+      (throw (ex-info "Too many positional arguments supplied."
+                      {:arguments args})))
+    (when-not benchmark-type
+      (throw (ex-info "Benchmark type is required."
+                      {:arguments args})))
+    (when-not log-file-path
+      (throw (ex-info "Log file path is required."
+                      {:arguments args})))
+    (-> (load-summary benchmark-type log-file-path)
+        (render-summary {:format format}))))
 
 (defn help []
   (println "Usage: bb <command> [args...]")
   (println)
   (println "Commands:")
-  (println "  summarize-log <benchmark-type> <log-file> - Print a summary of a benchmark log (e.g. tpch, readings, auctionmark)")
-  (println "  help                                      - Show this help message"))
+  (println "  summarize-log [--format table|slack|github] <benchmark-type> <log-file>")
+  (println "      Print a benchmark summary. Default format is 'table'.")
+  (println "  help")
+  (println "      Show this help message"))
+
+(defn -main [& args]
+  (if (empty? args)
+    (help)
+    (let [[command & rest-args] args]
+      (try
+        (case command
+          "summarize-log"
+          (let [output (summarize-log rest-args)]
+            (print output)
+            (flush))
+
+          (do
+            (println (str "Unknown command: " command))
+            (help)))
+        (catch Exception e
+          (println "Error:" e)
+          (println e)
+          (when-let [data (ex-data e)]
+            (println "Details:" data))
+          (System/exit 1))))))
+
+(when (= *file* (System/getProperty "babashka.file"))
+  (apply -main *command-line-args*))
 
 (comment
   (pprint/pprint (kubectl "get" "pods" "-n" "cloud-benchmark"))

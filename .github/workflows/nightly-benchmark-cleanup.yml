@@ -655,13 +655,18 @@ jobs:
           [ "$type" = "readings" ] && type="Readings"
           [ "$type" = "yakbench" ] && type="Yakbench"
 
-          if [ -n "${{ steps.logs.outputs.time_taken_iso }}" ]; then
+          summary="$(bb modules/bench/cloud/scripts/bench_tasks.clj summarize-log --format slack "${{ inputs.benchType }}" benchmark.log)"
+
+          if [ -n "$summary" ]; then
+            base="$type Benchmark completed\n\n$summary\n"
+          elif [ -n "${{ steps.logs.outputs.time_taken_iso }}" ]; then
             base="$type Benchmark completed in ${{ steps.logs.outputs.time_taken_iso }}"
           else
             base="$type Benchmark cleanup"
           fi
 
-          IMAGE="${{ steps.image-info.outputs.image || '' }}"
+          # IMAGE="${{ steps.image-info.outputs.image || '' }}"
+          IMAGE=""
 
           {
             echo "msg<<EOF"
