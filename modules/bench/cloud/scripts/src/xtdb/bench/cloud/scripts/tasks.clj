@@ -5,17 +5,9 @@
             [clojure.string :as str]))
 
 (defn format-duration
-  "Format a duration value with appropriate unit (h/m/s/ms/µs/ns).
-
-   Args:
-     value: The numeric value to format
-     unit: The input unit - :nanos, :micros, :millis, :seconds, :minutes, or :hours
-
-   Returns a human-readable string with the most appropriate unit."
-  [value unit]
+  [unit value]
   (when value
-    (let [;; Convert everything to nanoseconds first
-          nanos (case unit
+    (let [nanos (case unit
                   :nanos value
                   :micros (* value 1e3)
                   :millis (* value 1e6)
@@ -91,7 +83,7 @@
   (when-let [[_ hot-cold query-num name] (re-find #"^((?:hot|cold))-queries-q(\d+)-(.*)$" stage)]
     (let [friendly-name (title-case name)
           query-index (Long/parseLong query-num)
-          duration-pt (.toString (java.time.Duration/ofMillis time-taken-ms))]
+          duration-pt (format-duration :millis time-taken-ms)]
       {:query-order idx
        :query-index query-index
        :temp (str/capitalize hot-cold)
@@ -124,10 +116,10 @@
 (defn yakbench-query->query-row
   [profile {:keys [id mean p50 p90 p99 n sum]}]
   {:query (str (name profile) "/" id)
-   :mean (format-duration mean :nanos)
-   :p50 (format-duration p50 :nanos)
-   :p90 (format-duration p90 :nanos)
-   :p99 (format-duration p99 :nanos)
+   :mean (format-duration :nanos mean)
+   :p50 (format-duration :nanos p50)
+   :p90 (format-duration :nanos p90)
+   :p99 (format-duration :nanos p99)
    :n n
    :sum sum})
 
@@ -156,10 +148,10 @@
              str/trim)
          "\n\n"
          (format "Query total time: %s"
-                 (format-duration total-ms :millis))
+                 (format-duration :millis total-ms))
          "\n"
          (format "Benchmark total time: %s"
-                 (format-duration (:benchmark-total-time-ms summary) :millis)))))
+                 (format-duration :millis (:benchmark-total-time-ms summary))))))
 
 (defmethod summary->table "yakbench" [summary]
   (let [{:keys [rows total-ms]} (yakbench-summary->query-rows summary)]
@@ -168,10 +160,10 @@
              str/trim)
          "\n\n"
          (format "Query total time: %s"
-                 (format-duration total-ms :millis))
+                 (format-duration :millis total-ms))
          "\n"
          (format "Benchmark total time: %s"
-                 (format-duration (:benchmark-total-time-ms summary) :millis)))))
+                 (format-duration :millis (:benchmark-total-time-ms summary))))))
 
 ;; Slack wraps code blocks at 76 characters, so we need to keep columns minimal
 (defmulti summary->slack :benchmark-type)
@@ -180,7 +172,7 @@
   (let [{:keys [rows total-ms]} (tpch-summary->query-rows summary)
         table-rows (map (fn [{:keys [temp q query-name time-taken-ms]}]
                           {:query (str temp " " q " " query-name)
-                           :duration (format-duration time-taken-ms :millis)})
+                           :duration (format-duration :millis time-taken-ms)})
                         rows)]
     (str "```\n"
          (-> (with-out-str
@@ -188,10 +180,10 @@
              str/trim)
          "\n\n"
          (format "Query total time: %s"
-                 (format-duration total-ms :millis))
+                 (format-duration :millis total-ms))
          "\n"
          (format "Benchmark total time: %s"
-                 (format-duration (:benchmark-total-time-ms summary) :millis))
+                 (format-duration :millis (:benchmark-total-time-ms summary)))
          "\n```")))
 
 (defmethod summary->slack "yakbench" [summary]
@@ -202,10 +194,10 @@
              str/trim)
          "\n\n"
          (format "Query total time: %s"
-                 (format-duration total-ms :millis))
+                 (format-duration :millis total-ms))
          "\n"
          (format "Benchmark total time: %s"
-                 (format-duration (:benchmark-total-time-ms summary) :millis))
+                 (format-duration :millis (:benchmark-total-time-ms summary)))
          "\n```")))
 
 (defmulti summary->github-markdown :benchmark-type)
@@ -221,10 +213,10 @@
               (str/join "\n"))
          "\n\n"
          (format "Query total time: %s"
-                 (format-duration total-ms :millis))
+                 (format-duration :millis total-ms))
          "\n"
          (format "Benchmark total time: %s"
-                 (format-duration (:benchmark-total-time-ms summary) :millis)))))
+                 (format-duration :millis (:benchmark-total-time-ms summary))))))
 
 (defmethod summary->github-markdown "yakbench" [summary]
   (let [{:keys [rows total-ms]} (yakbench-summary->query-rows summary)]
@@ -237,10 +229,10 @@
               (str/join "\n"))
          "\n\n"
          (format "Query total time: %s"
-                 (format-duration total-ms :millis))
+                 (format-duration :millis total-ms))
          "\n"
          (format "Benchmark total time: %s"
-                 (format-duration (:benchmark-total-time-ms summary) :millis)))))
+                 (format-duration :millis (:benchmark-total-time-ms summary))))))
 
 (defn load-summary
   [benchmark-type log-file-path]

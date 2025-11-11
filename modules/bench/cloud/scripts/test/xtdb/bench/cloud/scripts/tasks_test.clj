@@ -5,36 +5,36 @@
 
 (deftest format-duration-test
   (testing "format-duration with various units"
-    (is (= "1.0h" (#'tasks/format-duration 3600e9 :nanos)))
-    (is (= "1.5h" (#'tasks/format-duration 5400e9 :nanos)))
-    (is (= "30.0m" (#'tasks/format-duration 1800e9 :nanos)))
-    (is (= "1.50s" (#'tasks/format-duration 1500e6 :nanos)))
-    (is (= "500ms" (#'tasks/format-duration 500e6 :nanos)))
-    (is (= "250µs" (#'tasks/format-duration 250e3 :nanos)))
-    (is (= "100ns" (#'tasks/format-duration 100 :nanos))))
+    (is (= "1.0h" (tasks/format-duration 3600e9 :nanos)))
+    (is (= "1.5h" (tasks/format-duration 5400e9 :nanos)))
+    (is (= "30.0m" (tasks/format-duration 1800e9 :nanos)))
+    (is (= "1.50s" (tasks/format-duration 1500e6 :nanos)))
+    (is (= "500ms" (tasks/format-duration 500e6 :nanos)))
+    (is (= "250µs" (tasks/format-duration 250e3 :nanos)))
+    (is (= "100ns" (tasks/format-duration 100 :nanos))))
 
   (testing "format-duration with different input units"
-    (is (= "1.0h" (#'tasks/format-duration 1 :hours)))
-    (is (= "1.0m" (#'tasks/format-duration 1 :minutes)))
-    (is (= "1.00s" (#'tasks/format-duration 1 :seconds)))
-    (is (= "1.00s" (#'tasks/format-duration 1000 :millis)))
-    (is (= "1ms" (#'tasks/format-duration 1000 :micros))))
+    (is (= "1.0h" (tasks/format-duration 1 :hours)))
+    (is (= "1.0m" (tasks/format-duration 1 :minutes)))
+    (is (= "1.00s" (tasks/format-duration 1 :seconds)))
+    (is (= "1.00s" (tasks/format-duration 1000 :millis)))
+    (is (= "1ms" (tasks/format-duration 1000 :micros))))
 
   (testing "format-duration with nil returns nil"
-    (is (nil? (#'tasks/format-duration nil :millis)))))
+    (is (nil? (tasks/format-duration nil :millis)))))
 
 (deftest title-case-test
   (testing "title-case conversion"
-    (is (= "Simple Query" (#'tasks/title-case "simple-query")))
-    (is (= "Multiple Word Query" (#'tasks/title-case "multiple-word-query")))
-    (is (= "Single" (#'tasks/title-case "single")))
-    (is (= "" (#'tasks/title-case "")))))
+    (is (= "Simple Query" (tasks/title-case "simple-query")))
+    (is (= "Multiple Word Query" (tasks/title-case "multiple-word-query")))
+    (is (= "Single" (tasks/title-case "single")))
+    (is (= "" (tasks/title-case "")))))
 
 (deftest tpch-stage->query-row-test
   (testing "valid hot query stage"
     (let [stage {:stage "hot-queries-q1-pricing-summary"
                  :time-taken-ms 1500}
-          result (#'tasks/tpch-stage->query-row 0 stage)]
+          result (tasks/tpch-stage->query-row 0 stage)]
       (is (= "Hot" (:temp result)))
       (is (= "Q1" (:q result)))
       (is (= "Pricing Summary" (:query-name result)))
@@ -43,13 +43,13 @@
   (testing "valid cold query stage"
     (let [stage {:stage "cold-queries-q5-local-supplier"
                  :time-taken-ms 2000}
-          result (#'tasks/tpch-stage->query-row 1 stage)]
+          result (tasks/tpch-stage->query-row 1 stage)]
       (is (= "Cold" (:temp result)))
       (is (= "Q5" (:q result)))
       (is (= "Local Supplier" (:query-name result)))))
 
   (testing "invalid stage returns nil"
-    (is (nil? (#'tasks/tpch-stage->query-row 0 {:stage "ingest" :time-taken-ms 1000})))))
+    (is (nil? (tasks/tpch-stage->query-row 0 {:stage "ingest" :time-taken-ms 1000})))))
 
 (deftest tpch-summary->query-rows-test
   (testing "calculating query rows with percentages"
