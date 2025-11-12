@@ -582,6 +582,27 @@ jobs:
           echo "image_repo=${repo}" >> "$GITHUB_OUTPUT"
           echo "image_tag=${tag}" >> "$GITHUB_OUTPUT"
 
+      - name: Gather Git Metadata from Job
+        id: git-info
+        if: steps.check-deployment.outcome == 'success'
+        run: |
+          set -euo pipefail
+          NS="cloud-benchmark"
+          JOB_NAME="${{ inputs.benchType }}"
+
+          # Get git metadata from the job annotations
+          git_sha=$(kubectl get job "$JOB_NAME" -n "$NS" -o jsonpath='{.metadata.annotations.xtdb\.com/git-sha}' 2>/dev/null || true)
+          git_branch=$(kubectl get job "$JOB_NAME" -n "$NS" -o jsonpath='{.metadata.annotations.xtdb\.com/git-branch}' 2>/dev/null || true)
+
+          echo "sha=${git_sha}" >> "$GITHUB_OUTPUT"
+          echo "branch=${git_branch}" >> "$GITHUB_OUTPUT"
+
+          if [ -n "$git_sha" ] || [ -n "$git_branch" ]; then
+            echo "Retrieved git metadata from job: branch=${git_branch}, sha=${git_sha}"
+          else
+            echo "No git metadata found on job"
+          fi
+
       - name: Run Cleanup Script
         if: ${{ always() && steps.check-deployment.outcome == 'success' }}
         run: |
@@ -619,6 +640,9 @@ jobs:
           run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           scale_factor_val="${{ env.SCALE_FACTOR || '' }}"
           concurrency_val="${{ env.CONCURRENCY || '' }}"
+          git_sha="${{ steps.git-info.outputs.sha || '' }}"
+          git_branch="${{ steps.git-info.outputs.branch || '' }}"
+          repo_url="${{ github.server_url }}/${{ github.repository }}"
 
           echo "# Benchmark Summary" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
@@ -633,6 +657,12 @@ jobs:
           fi
           if [ -n "$concurrency_val" ]; then
             echo "- **Concurrency**: ${concurrency_val}" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -n "$git_branch" ]; then
+            echo "- **Branch**: [${git_branch}](${repo_url}/tree/${git_branch})" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -n "$git_sha" ]; then
+            echo "- **Commit**: [${git_sha:0:7}](${repo_url}/commit/${git_sha})" >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "- **Repository**: ${repo}" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
@@ -672,10 +702,30 @@ jobs:
           fi
 
           IMAGE="${{ steps.image-info.outputs.image || '' }}"
+          GIT_SHA="${{ steps.git-info.outputs.sha || '' }}"
+          GIT_BRANCH="${{ steps.git-info.outputs.branch || '' }}"
+          REPO_URL="${{ github.server_url }}/${{ github.repository }}"
+
+          # Build git info line if we have metadata
+          GIT_INFO=""
+          if [ -n "$GIT_SHA" ] || [ -n "$GIT_BRANCH" ]; then
+            SHORT_SHA="${GIT_SHA:0:7}"
+            GIT_INFO_PARTS=()
+            if [ -n "$GIT_BRANCH" ]; then
+              GIT_INFO_PARTS+=("Branch: <${REPO_URL}/tree/${GIT_BRANCH}|\`${GIT_BRANCH}\`>")
+            fi
+            if [ -n "$GIT_SHA" ]; then
+              GIT_INFO_PARTS+=("Commit: <${REPO_URL}/commit/${GIT_SHA}|\`${SHORT_SHA}\`>")
+            fi
+            GIT_INFO=$(IFS=' | '; echo "${GIT_INFO_PARTS[*]}")
+          fi
 
           {
             echo "msg<<EOF"
             echo "$base"
+            if [ -n "$GIT_INFO" ]; then
+              echo "$GIT_INFO"
+            fi
             if [ -n "$IMAGE" ]; then
               echo "Image: $IMAGE"
             fi
