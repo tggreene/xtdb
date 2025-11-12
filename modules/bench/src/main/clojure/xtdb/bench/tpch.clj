@@ -43,6 +43,8 @@
                                    :or {scale-factor 0.01, seed 0}}]
   (log/info {:scale-factor scale-factor :seed seed :no-load? no-load?})
 
+  (log/info {:msg "A-OK"})
+
   {:title "TPC-H (OLAP)", :seed seed
    :parameters {:scale-factor scale-factor :seed seed :no-load? no-load?}
    :->state #(do {:!state (atom {})})
