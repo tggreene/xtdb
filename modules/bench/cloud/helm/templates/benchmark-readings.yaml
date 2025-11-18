@@ -43,6 +43,8 @@ spec:
         - name: local-disk-cache
           emptyDir:
             sizeLimit: {{ .Values.xtdbConfig.localDiskCache.sizeLimit }}
+        - name: crash-logs
+          emptyDir: {}
       initContainers:
       - name: wait-for-kafka
         image: busybox
@@ -56,6 +58,33 @@ spec:
         - name: xtdb-node
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    # Upload crash artifacts to Azure Blob Storage before pod termination
+                    if command -v az >/dev/null 2>&1; then
+                      CRASH_DIRS="/var/crash-logs /opt/xtdb/crashes"
+                      POD_NAME="${XTDB_NODE_ID:-unknown}"
+                      TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+                      UPLOAD_PATH="crash-artifacts/${POD_NAME}-${TIMESTAMP}"
+
+                      for dir in $CRASH_DIRS; do
+                        if [ -d "$dir" ] && [ "$(ls -A $dir 2>/dev/null)" ]; then
+                          echo "Uploading crash artifacts from $dir to Azure Blob Storage..."
+                          az storage blob upload-batch \
+                            --account-name "${AZURE_STORAGE_ACCOUNT}" \
+                            --destination "${AZURE_STORAGE_CONTAINER}" \
+                            --destination-path "${UPLOAD_PATH}/$(basename $dir)" \
+                            --source "$dir" \
+                            --auth-mode login \
+                            --overwrite true || echo "Failed to upload from $dir"
+                        fi
+                      done
+                    fi
           volumeMounts:
             - name: tmp
               mountPath: /tmp
@@ -64,6 +93,8 @@ spec:
               subPath: xtdbconfig.yaml
             - name: local-disk-cache
               mountPath: /var/lib/xtdb/buffers/
+            - name: crash-logs
+              mountPath: /var/crash-logs
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           envFrom:
