@@ -2,9 +2,6 @@ FROM eclipse-temurin:21
 
 WORKDIR /opt/xtdb
 
-# Enable core dumps (unlimited size)
-RUN ulimit -c unlimited || true
-
 ENTRYPOINT [ \
     "java","-cp","xtdb-bench.jar", \
     "-Dclojure.main.report=stderr", \

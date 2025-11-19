@@ -287,6 +287,71 @@ jobs:
             echo "time_taken_iso=$duration" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Retrieve Crash Artifacts from Pods
+        id: download-crash-artifacts
+        if: steps.check-deployment.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          NS="cloud-benchmark"
+          OUTPUT_DIR="${RUNNER_TEMP}/crash-artifacts"
+          mkdir -p "$OUTPUT_DIR"
+
+          # Find all benchmark pods
+          pods=$(kubectl get pods -n "$NS" -l app.kubernetes.io/name=xtdb,app.kubernetes.io/component=benchmark -o jsonpath='{.items[*].metadata.name}' || true)
+
+          if [ -z "$pods" ]; then
+            echo "No benchmark pods found"
+            echo "has_artifacts=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          found_artifacts=false
+          for pod in $pods; do
+            echo "Checking pod: $pod"
+            pod_dir="$OUTPUT_DIR/$pod"
+            mkdir -p "$pod_dir"
+
+            # Try to copy crash logs from /var/crash-logs
+            if kubectl exec -n "$NS" "$pod" -c xtdb-node -- test -d /var/crash-logs 2>/dev/null; then
+              echo "  Copying /var/crash-logs from $pod..."
+              kubectl cp -n "$NS" "$pod:/var/crash-logs" "$pod_dir/crash-logs" -c xtdb-node 2>/dev/null || true
+              if [ -d "$pod_dir/crash-logs" ] && [ "$(ls -A "$pod_dir/crash-logs" 2>/dev/null)" ]; then
+                found_artifacts=true
+              fi
+            fi
+
+            # Try to copy XTDB crashes from /opt/xtdb/crashes
+            if kubectl exec -n "$NS" "$pod" -c xtdb-node -- test -d /opt/xtdb/crashes 2>/dev/null; then
+              echo "  Copying /opt/xtdb/crashes from $pod..."
+              kubectl cp -n "$NS" "$pod:/opt/xtdb/crashes" "$pod_dir/xtdb-crashes" -c xtdb-node 2>/dev/null || true
+              if [ -d "$pod_dir/xtdb-crashes" ] && [ "$(ls -A "$pod_dir/xtdb-crashes" 2>/dev/null)" ]; then
+                found_artifacts=true
+              fi
+            fi
+
+            # Clean up empty pod directory
+            if [ ! "$(ls -A "$pod_dir" 2>/dev/null)" ]; then
+              rm -rf "$pod_dir"
+            fi
+          done
+
+          if [ "$found_artifacts" = "true" ]; then
+            echo "has_artifacts=true" >> "$GITHUB_OUTPUT"
+            echo "artifacts_path=${OUTPUT_DIR}" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_artifacts=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload Crash Artifacts to GitHub
+        if: steps.check-deployment.outcome == 'success' && steps.download-crash-artifacts.outputs.has_artifacts == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: crash-artifacts-${{ inputs.benchType }}-${{ inputs.nodeId }}-${{ steps.derive.outputs.bench_status || inputs.status }}
+          path: ${{ steps.download-crash-artifacts.outputs.artifacts_path }}
+          retention-days: 30
+          if-no-files-found: warn
+
       - name: Set Timestamp
         id: timestamp
         run: |
