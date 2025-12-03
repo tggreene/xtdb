@@ -36,6 +36,19 @@ data:
       apt-get update -qq && apt-get install -y -qq inotify-tools procps >/dev/null 2>&1
     fi
 
+    # Azure workload identity login
+    if [[ -n "${AZURE_FEDERATED_TOKEN_FILE:-}" ]]; then
+      echo "Logging in with Azure workload identity..."
+      az login --federated-token "$(cat "$AZURE_FEDERATED_TOKEN_FILE")" \
+        --service-principal \
+        -u "$AZURE_CLIENT_ID" \
+        -t "$AZURE_TENANT_ID" \
+        --output none
+    elif [[ -n "${AZURE_CLIENT_ID:-}" ]]; then
+      echo "Logging in with Azure managed identity..."
+      az login --identity --username "$AZURE_CLIENT_ID" --output none
+    fi
+
     upload_file() {
       local file=$1
       echo "Uploading $file to $PREFIX/$file..."
