@@ -555,6 +555,10 @@
   (util/install-uncaught-exception-handler!)
   (logging/set-from-env! (System/getenv))
 
+  ;; HACK: sleep for testing heap dump upload
+  (log/info "Sleeping 5 minutes for testing...")
+  (Thread/sleep 300000)
+
   (require (case benchmark-type
              "tsbs-iot" 'xtdb.bench.tsbs
              "ingestTxOverhead" 'xtdb.bench.ingest-tx-overhead
