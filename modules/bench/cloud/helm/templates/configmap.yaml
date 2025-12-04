@@ -8,6 +8,7 @@ data:
   XTDB_LOG_TOPIC: {{ .Values.xtdbConfig.logTopic | quote }}
   JDK_JAVA_OPTIONS: {{ .Values.xtdbConfig.jdkOptions | quote }}
   XTDB_LOGGING_LEVEL: {{ .Values.xtdbConfig.loggingLevel | quote }}
+  GITHUB_ACTION_URL: {{ .Values.git.actionUrl | default "https://api.github.com/repos/tggreene/xtdb/actions/workflows/nightly-benchmark-cleanup.yml/dispatches" | quote }}
   {{- with .Values.providerConfig.env }}
   {{- range $key, $val := . }}
   {{ $key }}: {{ $val | quote }}
