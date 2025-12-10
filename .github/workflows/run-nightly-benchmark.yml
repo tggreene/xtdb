@@ -285,6 +285,9 @@ jobs:
           # Run the check (exits non-zero on failure)
           result=$(./modules/bench/cloud/scripts/tasks check-immediate-failure 2>&1) || {
             echo "immediate_failure=true" >> "$GITHUB_OUTPUT"
+            echo "::group::check-immediate-failure output"
+            echo "$result"
+            echo "::endgroup::"
             pod_name=$(echo "$result" | jq -r '.podName // empty' 2>/dev/null || true)
             if [ -n "$pod_name" ]; then
               echo "immediate_failure_pod=${pod_name}" >> "$GITHUB_OUTPUT"
