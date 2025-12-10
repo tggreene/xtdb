@@ -245,7 +245,7 @@
                (seq running-pods)
                (let [now (System/currentTimeMillis)
                      since (or running-since now)
-                     elapsed-seconds (/ (- now since) 1000)]
+                     elapsed-seconds (double (/ (- now since) 1000))]
                  (if (nil? running-since)
                    (do
                      (log-stderr "Benchmark pods entered running state; starting stability timer.")
