@@ -5,6 +5,7 @@
             [xtdb.bench.cloud.scripts.summary :as summary]
             [xtdb.bench.cloud.scripts.util :as util]
             [xtdb.bench.cloud.scripts.k8s :as k8s]
+            [babashka.process :as proc]
             [clojure.string :as str]))
 
 (deftest parse-benchmark-summary-test
@@ -589,6 +590,36 @@
 ;; ============================================================================
 ;; k8s tests - mocking kubectl responses
 ;; ============================================================================
+
+(deftest kubectl-command-construction-test
+  (testing "kubectl passes args as separate strings to proc/shell"
+    (let [captured-args (atom nil)]
+      (with-redefs [proc/shell (fn [opts & args]
+                                 (reset! captured-args args)
+                                 {:exit 0 :out "{\"items\":[]}" :err ""})]
+        (k8s/kubectl "get" "pods" "-n" "test-ns" "-l" "app=foo")
+        (is (= ["kubectl" "get" "pods" "-n" "test-ns" "-l" "app=foo" "-o" "json"]
+               (vec @captured-args))
+            "Args should be separate strings, not joined"))))
+
+  (testing "kubectl-get-pods constructs correct command with selector"
+    (let [captured-args (atom nil)]
+      (with-redefs [proc/shell (fn [opts & args]
+                                 (reset! captured-args args)
+                                 {:exit 0 :out "{\"items\":[]}" :err ""})]
+        (k8s/kubectl-get-pods "cloud-benchmark" "app.kubernetes.io/component=benchmark")
+        (is (= ["kubectl" "get" "pods" "-n" "cloud-benchmark" "-l" "app.kubernetes.io/component=benchmark" "-o" "json"]
+               (vec @captured-args))))))
+
+  (testing "kubectl-raw does not add -o json"
+    (let [captured-args (atom nil)]
+      (with-redefs [proc/shell (fn [opts & args]
+                                 (reset! captured-args args)
+                                 {:exit 0 :out "some output" :err ""})]
+        (k8s/kubectl-raw "logs" "pod-name" "-n" "test-ns")
+        (is (= ["kubectl" "logs" "pod-name" "-n" "test-ns"]
+               (vec @captured-args))
+            "kubectl-raw should not add -o json")))))
 
 (deftest classify-job-test
   (testing "running job with active pods"
