@@ -797,6 +797,61 @@
         (finally
           (.delete temp-file))))))
 
+(deftest wait-for-benchmark-completion-test
+  (testing "job completes via job conditions"
+    (with-redefs [k8s/kubectl (fn [& _] {:status {:conditions [{:type "Complete" :status "True"}]}})
+                  k8s/kubectl-get-pods (constantly {:items []})]
+      (let [result (k8s/wait-for-benchmark-completion "tpch" {:sleep-seconds 0 :max-iterations 1})]
+        (is (= "success" (:status result)))
+        (is (false? (:timedOut result))))))
+
+  (testing "job fails via job conditions"
+    (with-redefs [k8s/kubectl (fn [& _] {:status {:conditions [{:type "Failed" :status "True"}]}})
+                  k8s/kubectl-get-pods (constantly {:items []})]
+      (let [result (k8s/wait-for-benchmark-completion "tpch" {:sleep-seconds 0 :max-iterations 1})]
+        (is (= "failure" (:status result)))
+        (is (false? (:timedOut result))))))
+
+  (testing "detects completion from pods when job has no conditions - job-name selector works"
+    (let [call-count (atom 0)]
+      (with-redefs [k8s/kubectl (fn [& _] {:status {:conditions []}})
+                    k8s/kubectl-get-pods (fn [_ns selector]
+                                           (swap! call-count inc)
+                                           (if (str/includes? selector "job-name=")
+                                             {:items [{:status {:phase "Succeeded"}}]}
+                                             {:items []}))]
+        (let [result (k8s/wait-for-benchmark-completion "tpch" {:sleep-seconds 0 :max-iterations 2})]
+          (is (= "success" (:status result)))
+          (is (false? (:timedOut result)))))))
+
+  (testing "falls back to component selector when job-name selector returns empty"
+    (let [selectors-tried (atom [])]
+      (with-redefs [k8s/kubectl (fn [& _] {:status {:conditions []}})
+                    k8s/kubectl-get-pods (fn [_ns selector]
+                                           (swap! selectors-tried conj selector)
+                                           (if (str/includes? selector "app.kubernetes.io/component")
+                                             {:items [{:status {:phase "Succeeded"}}]}
+                                             {:items []}))]
+        (let [result (k8s/wait-for-benchmark-completion "tpch" {:sleep-seconds 0 :max-iterations 2})]
+          (is (= "success" (:status result)))
+          (is (some #(str/includes? % "job-name=") @selectors-tried)
+              "Should have tried job-name selector")
+          (is (some #(str/includes? % "app.kubernetes.io/component") @selectors-tried)
+              "Should have fallen back to component selector")))))
+
+  (testing "detects failure from pod phase"
+    (with-redefs [k8s/kubectl (fn [& _] {:status {:conditions []}})
+                  k8s/kubectl-get-pods (constantly {:items [{:status {:phase "Failed"}}]})]
+      (let [result (k8s/wait-for-benchmark-completion "tpch" {:sleep-seconds 0 :max-iterations 2})]
+        (is (= "failure" (:status result))))))
+
+  (testing "times out when pods never become terminal"
+    (with-redefs [k8s/kubectl (fn [& _] {:status {:conditions []}})
+                  k8s/kubectl-get-pods (constantly {:items [{:status {:phase "Running"}}]})]
+      (let [result (k8s/wait-for-benchmark-completion "tpch" {:sleep-seconds 0 :max-iterations 2})]
+        (is (= "unknown" (:status result)))
+        (is (true? (:timedOut result)))))))
+
 (deftest derive-benchmark-status-test
   (testing "job completed successfully"
     (with-redefs [k8s/kubectl (fn [& _] {:status {:conditions [{:type "Complete" :status "True"}]}})]
