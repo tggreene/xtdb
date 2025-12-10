@@ -499,13 +499,17 @@
              {:status "failure" :timedOut false})
 
            :else
-           (let [;; Check if all pods are terminal as early exit
-                 pods (kubectl-get-pods namespace (str "job-name=" job-name))
-                 pod-items (:items pods)
-                 all-terminal? (every? #(contains? #{"Succeeded" "Failed"}
-                                                    (get-in % [:status :phase]))
-                                        pod-items)]
-             (if (and (seq pod-items) all-terminal?)
+           ;; Check pods - try job-name label first, fall back to component label
+           (let [pods-by-job (kubectl-get-pods namespace (str "job-name=" job-name))
+                 pods-by-component (kubectl-get-pods namespace "app.kubernetes.io/name=xtdb,app.kubernetes.io/component=benchmark")
+                 pod-items (if (seq (:items pods-by-job))
+                             (:items pods-by-job)
+                             (:items pods-by-component))
+                 all-terminal? (and (seq pod-items)
+                                    (every? #(contains? #{"Succeeded" "Failed"}
+                                                        (get-in % [:status :phase]))
+                                            pod-items))]
+             (if all-terminal?
                (do
                  (log-stderr "All benchmark pods are terminal; stopping job wait")
                  ;; Determine final status from pod phases
