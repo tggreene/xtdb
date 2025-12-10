@@ -19,8 +19,8 @@
    Returns nil if command fails."
   [& args]
   (try
-    (let [result (proc/shell {:out :string :err :string}
-                             "kubectl" (str/join " " (conj (vec args) "-o" "json")))]
+    (let [full-args (concat ["kubectl"] args ["-o" "json"])
+          result (apply proc/shell {:out :string :err :string} full-args)]
       (when (zero? (:exit result))
         (json/parse-string (:out result) true)))
     (catch Exception _
@@ -30,8 +30,8 @@
   "Execute kubectl command and return raw output string."
   [& args]
   (try
-    (let [result (proc/shell {:out :string :err :string}
-                             "kubectl" (str/join " " args))]
+    (let [full-args (concat ["kubectl"] args)
+          result (apply proc/shell {:out :string :err :string} full-args)]
       (when (zero? (:exit result))
         (str/trim (:out result))))
     (catch Exception _
