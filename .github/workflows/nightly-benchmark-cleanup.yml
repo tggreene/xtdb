@@ -566,9 +566,16 @@ jobs:
           fi
 
           log_path="$(pwd)/benchmark.log"
-          summary="$(./modules/bench/cloud/scripts/tasks summarize-log --format github "${{ inputs.benchType }}" "$log_path")"
-          echo "## Query Summary" >> "$GITHUB_STEP_SUMMARY"
-          echo "$summary" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f "$log_path" ]; then
+            summary="$(./modules/bench/cloud/scripts/tasks summarize-log --format github "${{ inputs.benchType }}" "$log_path" 2>&1)" || summary=""
+            if [ -n "$summary" ]; then
+              echo "## Query Summary" >> "$GITHUB_STEP_SUMMARY"
+              echo "$summary" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          else
+            echo "## Query Summary" >> "$GITHUB_STEP_SUMMARY"
+            echo "_No benchmark log available_" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
 
       - name: Compose Slack Message
@@ -590,7 +597,10 @@ jobs:
           fi
 
           log_path="$(pwd)/benchmark.log"
-          summary="$(./modules/bench/cloud/scripts/tasks summarize-log --format slack "${{ inputs.benchType }}" "$log_path")"
+          summary=""
+          if [ -f "$log_path" ]; then
+            summary="$(./modules/bench/cloud/scripts/tasks summarize-log --format slack "${{ inputs.benchType }}" "$log_path" 2>&1)" || summary=""
+          fi
 
           # Build base message
           if [ -n "${{ steps.logs.outputs.time_taken_iso }}" ]; then
