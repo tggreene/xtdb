@@ -146,8 +146,9 @@
 
 (defn query-readings-with-system [node start end opts]
   (xt/q node ["SELECT s._id AS system_id, s.nmi, r.value, r._valid_from, r._valid_to
-               FROM system s FOR ALL VALID_TIME
-               JOIN readings r FOR VALID_TIME BETWEEN ? AND ? ON r.system_id = s._id
+               FROM readings r
+               JOIN system s ON s._id = r.system_id AND s._valid_time CONTAINS r._valid_from
+               WHERE r._valid_from >= ? AND r._valid_from < ?
                LIMIT 1000" start end] opts))
 
 (defn ->query-stage [query-type]
