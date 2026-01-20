@@ -294,11 +294,16 @@
                  :ad_clicks :digests :bulk_sends :skips]
           :let [docs (get docs-by-table table)]
           :when (seq docs)]
-    (let [batches (partition-all 1000 docs)]
-      (loop [bs batches]
+    (let [batches (partition-all 1000 docs)
+          total-batches (count batches)]
+      (log/info {:table table :docs (count docs) :batches total-batches})
+      (loop [bs batches
+             batch-num 1]
         (when-let [batch (first bs)]
           (xt/submit-tx conn [(into [:put-docs table] batch)])
-          (recur (rest bs)))))))
+          (when (zero? (mod batch-num 100))
+            (log/info {:table table :batch batch-num :of total-batches}))
+          (recur (rest bs) (inc batch-num)))))))
 
 (defn load-data!
   "Load data in chunks if scale factor is greater than 0.1 under the assumption
@@ -317,6 +322,6 @@
             v-sub-scales (vec sub-scales)
             total (count v-sub-scales)]
         (doseq [[idx sub-scale] (map-indexed vector v-sub-scales)]
-          (log/debug (format "Loading chunk %d/%d (scale %.3f)" (inc idx) total sub-scale))
+          (log/info {:chunk (inc idx) :of total :sub-scale sub-scale})
           (let [docs (generate-data random sub-scale)]
             (load-generated! conn docs)))))))
