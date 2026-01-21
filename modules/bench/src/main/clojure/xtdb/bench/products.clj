@@ -28,7 +28,7 @@
 
 (defn store-documents! [node docs]
   (dorun (->> docs
-              (partition-all 100) ; reduced from 1000 - product docs are large
+              (partition-all 500) ; reduced from 1000 - product docs are large
               (map-indexed (fn [idx docs]
                              (log/debug "batch" idx)
                              (xt/submit-tx node [(into [:put-docs :products] docs)]))))))
