@@ -667,6 +667,12 @@ fun createBench(benchName: String, properties: Map<String, String>) {
         if (project.hasProperty("yourkit"))
             jvmArgs("-agentpath:/opt/yourkit/bin/linux-x86-64/libyjpagent.so=on_exit=snapshot,async_sampling_cpu,app_name=xtdb-$benchName")
 
+        if (project.hasProperty("asyncProfiler")) {
+            val profileFile = project.findProperty("profileFile")?.toString() ?: "profile-$benchName.html"
+            val profileEvent = project.findProperty("profileEvent")?.toString() ?: "cpu"
+            jvmArgs("-agentpath:/opt/async-profiler/lib/libasyncProfiler.dylib=start,event=$profileEvent,file=$profileFile")
+        }
+
         this.args = args
     }
 }
