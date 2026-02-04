@@ -40,6 +40,30 @@ internal fun LongArrayList.binarySearch(needle: Long): Int {
     return -left - 1
 }
 
+/**
+ * Replaces elements in [fromIndex, toIndex) with [values] using a single arraycopy for the tail shift.
+ * This avoids the multiple array copies that separate insert + removeRange calls would cause.
+ */
+internal fun LongArrayList.splice(fromIndex: Int, toIndex: Int, vararg values: Long) {
+    val removeCount = toIndex - fromIndex
+    val insertCount = values.size
+    val delta = insertCount - removeCount
+    val newSize = elementsCount + delta
+
+    if (delta > 0) ensureCapacity(newSize)
+
+    val tailCount = elementsCount - toIndex
+    if (tailCount > 0 && delta != 0) {
+        System.arraycopy(buffer, toIndex, buffer, fromIndex + insertCount, tailCount)
+    }
+
+    for (i in values.indices) {
+        buffer[fromIndex + i] = values[i]
+    }
+
+    elementsCount = newSize
+}
+
 data class Ceiling(val validTimes: LongArrayList, val sysTimeCeilings: LongArrayList) {
     constructor() : this(LongArrayList(), LongArrayList()) {
         reset()
@@ -88,37 +112,32 @@ data class Ceiling(val validTimes: LongArrayList, val sysTimeCeilings: LongArray
 
         when {
             !insertedEnd && !insertedStart -> {
-                sysTimeCeilings[end] = systemFrom
+                validTimes.splice(end + 1, start)
+                sysTimeCeilings.splice(end, start, systemFrom)
             }
 
             !insertedEnd -> {
-                validTimes.insert(start, validFrom)
-                sysTimeCeilings.insert(end, systemFrom)
+                validTimes.splice(end + 1, start, validFrom)
+                sysTimeCeilings.splice(end, start - 1, systemFrom)
             }
 
             !insertedStart -> {
-                validTimes.insert(end, validTo)
-                sysTimeCeilings.insert(end, systemFrom)
-                start++
+                validTimes.splice(end, start, validTo)
+                sysTimeCeilings.splice(end, start, systemFrom)
             }
 
             end == start -> {
-                validTimes.insert(end, validTo)
-                sysTimeCeilings.insert(end, systemFrom)
-                start++
-                validTimes.insert(start, validFrom)
-                sysTimeCeilings.insert(start, sysTimeCeilings[end - 1])
+                // splitting an existing range - preserve the ceiling for the upper portion
+                val preservedCeiling = sysTimeCeilings[end - 1]
+                validTimes.splice(end, end, validTo, validFrom)
+                sysTimeCeilings.splice(end, end, systemFrom, preservedCeiling)
             }
 
             else -> {
-                validTimes.insert(end, validTo)
-                sysTimeCeilings.insert(end, systemFrom)
-                validTimes[start] = validFrom
+                validTimes.splice(end, start, validTo, validFrom)
+                sysTimeCeilings.splice(end, start - 1, systemFrom)
             }
         }
-
-        validTimes.removeRange(end + 1, start)
-        sysTimeCeilings.removeRange(end + 1, start)
     }
 
 }
