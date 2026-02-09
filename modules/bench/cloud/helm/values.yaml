@@ -37,7 +37,7 @@ clickbench:
 fusion:
   devices: 10000
   readings: 1000
-  duration: "PT30S"
+  duration: "PT30M"
   threads: 4
 
 ingestTxOverhead:

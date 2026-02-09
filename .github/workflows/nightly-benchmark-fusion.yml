@@ -1,5 +1,5 @@
 name: Nightly Benchmark Fusion
-run-name: "Fusion (Devices: ${{ inputs.fusion_device_count || '10000' }}, Duration: ${{ inputs.fusion_duration || 'PT30S' }})"
+run-name: "Fusion (Devices: ${{ inputs.fusion_device_count || '10000' }}, Duration: ${{ inputs.fusion_duration || 'PT30M' }})"
 
 on:
   workflow_dispatch:
@@ -17,7 +17,7 @@ on:
       fusion_duration:
         description: 'OLTP phase duration (ISO-8601)'
         required: false
-        default: 'PT30S'
+        default: 'PT30M'
         type: string
       fusion_threads:
         description: 'OLTP thread count'
@@ -49,6 +49,6 @@ jobs:
       benchmark_timeout: PT2H
       fusion_device_count: ${{ inputs.fusion_device_count || '10000' }}
       fusion_reading_count: ${{ inputs.fusion_reading_count || '1000' }}
-      fusion_duration: ${{ inputs.fusion_duration || 'PT30S' }}
+      fusion_duration: ${{ inputs.fusion_duration || 'PT30M' }}
       fusion_threads: ${{ inputs.fusion_threads || '4' }}
     secrets: inherit
