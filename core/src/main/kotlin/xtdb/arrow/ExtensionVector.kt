@@ -35,6 +35,10 @@ abstract class ExtensionVector : MonoVector() {
     override fun writeUndefined() = inner.writeUndefined()
     override fun writeNull() = inner.writeNull()
 
+    override fun ensureCapacity(valueCount: Int) = inner.ensureCapacity(valueCount)
+    override fun setNull(idx: Int) = inner.setNull(idx)
+    override fun setBytes(idx: Int, v: ByteBuffer) = inner.setBytes(idx, v)
+
     override fun getBytes(idx: Int): ByteBuffer = inner.getBytes(idx)
     override fun writeBytes(v: ByteBuffer) = inner.writeBytes(v)
 

@@ -357,6 +357,10 @@
 (defmethod set-value-code :timestamp-local [_ w idx val] `(.setLong ~w ~idx ~val))
 (defmethod set-value-code :timestamp-tz [_ w idx val] `(.setLong ~w ~idx ~val))
 
+(defmethod set-value-code :utf8 [_ w idx val] `(.setBytes ~w ~idx ~val))
+(defmethod set-value-code :varbinary [_ w idx val] `(.setBytes ~w ~idx ~val))
+(defmethod set-value-code :keyword [_ w idx val] `(.setBytes ~w ~idx ~val))
+
 (defmethod set-value-code :date [^VectorType$Mono vec-type w idx val]
   (case (st/date-type->unit vec-type)
     :day `(.setInt ~w ~idx ~val)

@@ -7,6 +7,7 @@ import xtdb.api.query.IKeyFn
 import xtdb.arrow.VectorType.Companion.maybe
 import xtdb.arrow.VectorType.Mono
 import xtdb.util.Hasher
+import java.nio.ByteBuffer
 
 sealed class MonoVector : Vector(), VectorReader, VectorWriter {
 
@@ -29,6 +30,7 @@ sealed class MonoVector : Vector(), VectorReader, VectorWriter {
     open fun setLong(idx: Int, v: Long): Unit = unsupported("setLong")
     open fun setFloat(idx: Int, v: Float): Unit = unsupported("setFloat")
     open fun setDouble(idx: Int, v: Double): Unit = unsupported("setDouble")
+    open fun setBytes(idx: Int, v: ByteBuffer): Unit = unsupported("setBytes")
 
     override fun writeNull() {
         if (!nullable) nullable = true

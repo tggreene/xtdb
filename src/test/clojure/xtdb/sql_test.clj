@@ -878,6 +878,25 @@
                         "SELECT heads, COUNT(heads) AS count_heads FROM docs HAVING count_heads > 1")))
           "having referencing select column")))
 
+(t/deftest test-min-max-on-strings-sql
+  (let [_tx (xt/submit-tx tu/*node*
+                          [[:put-docs :products {:xt/id 1, :name "Banana", :category "fruit"}]
+                           [:put-docs :products {:xt/id 2, :name "Apple", :category "fruit"}]
+                           [:put-docs :products {:xt/id 3, :name "Cherry", :category "fruit"}]
+                           [:put-docs :products {:xt/id 4, :name "Broccoli", :category "veg"}]
+                           [:put-docs :products {:xt/id 5, :name "Asparagus", :category "veg"}]])]
+
+    (t/is (= #{{:category "fruit", :min-name "Apple", :max-name "Cherry"}
+               {:category "veg", :min-name "Asparagus", :max-name "Broccoli"}}
+             (set (xt/q tu/*node*
+                        "SELECT category, MIN(name) AS min_name, MAX(name) AS max_name FROM products GROUP BY category")))
+          "MIN/MAX on string columns with GROUP BY")
+
+    (t/is (= [{:min-name "Apple", :max-name "Cherry"}]
+             (xt/q tu/*node*
+                   "SELECT MIN(name) AS min_name, MAX(name) AS max_name FROM products WHERE category = 'fruit'"))
+          "MIN/MAX on strings without GROUP BY")))
+
 (t/deftest test-group-by-with-projected-column-in-expr
   (t/is (=plan-file
          "test-group-by-with-projected-column-in-expr"

@@ -5,7 +5,8 @@
             [xtdb.test-util :as tu]
             [xtdb.util :as util]
             [xtdb.vector.reader :as vr])
-  (:import [xtdb.arrow Vector]))
+  (:import [java.util Arrays]
+           [xtdb.arrow Vector]))
 
 (t/use-fixtures :each tu/with-allocator tu/with-node)
 
@@ -266,6 +267,100 @@
              (tu/query-ra '[:group-by {:columns [a {n (min b)}]}
                             [:table {:rows [{:a 42, :b nil} {:a 45, :b 1}]}]])))))
 
+(t/deftest test-min-max-strings
+  (t/is (= [{:min "alpha"
+             :max "gamma"}]
+           (tu/query-ra '[:group-by {:columns [{min (min a)}
+                                               {max (max a)}]}
+                          [:table {:rows [{:a "beta"}
+                                          {:a "alpha"}
+                                          {:a "gamma"}]}]]))
+        "basic string min/max")
+
+  (t/testing "multiple groups"
+    (t/is (= #{{:grp "x", :min "apple", :max "cherry"}
+               {:grp "y", :min "date", :max "fig"}}
+             (set (tu/query-ra '[:group-by {:columns [grp {min (min a)} {max (max a)}]}
+                                 [:table {:rows [{:grp "x", :a "banana"}
+                                                 {:grp "x", :a "apple"}
+                                                 {:grp "x", :a "cherry"}
+                                                 {:grp "y", :a "fig"}
+                                                 {:grp "y", :a "date"}
+                                                 {:grp "y", :a "elderberry"}]}]])))))
+
+  (t/testing "multiple batches"
+    (t/is (= [{:min "alpha", :max "zulu"}]
+             (tu/query-ra '[:group-by {:columns [{min (min a)} {max (max a)}]}
+                            [::tu/pages {a #xt/type :utf8}
+                             [[{:a "mike"} {:a "alpha"} {:a "november"}]
+                              [{:a "zulu"} {:a "bravo"} {:a "foxtrot"}]]]]))))
+
+  (t/testing "multiple groups across multiple batches"
+    (t/is (= #{{:grp 1, :min "a", :max "c"}
+               {:grp 2, :min "d", :max "f"}}
+             (set (tu/query-ra '[:group-by {:columns [grp {min (min a)} {max (max a)}]}
+                                 [::tu/pages {grp #xt/type :i64, a #xt/type :utf8}
+                                  [[{:grp 1, :a "b"} {:grp 2, :a "e"}]
+                                   [{:grp 1, :a "a"} {:grp 1, :a "c"} {:grp 2, :a "d"} {:grp 2, :a "f"}]]]])))))
+
+  (t/testing "null handling"
+    (t/is (= [{:min "bar"}]
+             (tu/query-ra '[:group-by {:columns [{min (min a)}]}
+                            [:table {:rows [{:a "foo"} {:a nil} {:a "bar"}]}]]))
+          "nulls ignored in aggregation")
+
+    (t/is (= [{}]
+             (tu/query-ra '[:group-by {:columns [{min (min a)}]}
+                            [:table {:rows [{:a nil} {:a nil}]}]]))
+          "all nulls returns null")
+
+    (t/is (= #{{:grp 1} {:grp 2, :min "x", :max "y"}}
+             (set (tu/query-ra '[:group-by {:columns [grp {min (min a)} {max (max a)}]}
+                                 [:table {:rows [{:grp 1, :a nil}
+                                                 {:grp 2, :a "x"}
+                                                 {:grp 2, :a "y"}]}]])))
+          "group with all nulls alongside group with values"))
+
+  (t/testing "empty strings"
+    (t/is (= [{:min "", :max "foo"}]
+             (tu/query-ra '[:group-by {:columns [{min (min a)} {max (max a)}]}
+                            [:table {:rows [{:a ""} {:a "foo"} {:a "bar"}]}]]))
+          "empty string is minimum"))
+
+  (t/testing "single value"
+    (t/is (= [{:min "only", :max "only"}]
+             (tu/query-ra '[:group-by {:columns [{min (min a)} {max (max a)}]}
+                            [:table {:rows [{:a "only"}]}]]))
+          "single value is both min and max"))
+
+  (t/testing "duplicate values"
+    (t/is (= [{:min "aaa", :max "zzz"}]
+             (tu/query-ra '[:group-by {:columns [{min (min a)} {max (max a)}]}
+                            [:table {:rows [{:a "aaa"} {:a "zzz"} {:a "aaa"} {:a "zzz"} {:a "mmm"}]}]]))
+          "duplicates handled correctly"))
+
+  (t/testing "keyword min/max"
+    (t/is (= [{:min :alpha, :max :gamma}]
+             (tu/query-ra '[:group-by {:columns [{min (min a)} {max (max a)}]}
+                            [:table {:rows [{:a :beta} {:a :alpha} {:a :gamma}]}]]))
+          "keywords ordered lexicographically"))
+
+  (t/testing "varbinary min/max"
+    (let [rows [{:a (byte-array [0x00 0x02])}
+                {:a (byte-array [0x00 0x01])}
+                {:a (byte-array [0xFF])}]
+          result (first (tu/query-ra [:group-by '{:columns [{min (min a)} {max (max a)}]}
+                                      [:table {:rows rows}]]))]
+      (t/is (Arrays/equals (byte-array [0x00 0x01]) ^bytes (:min result))
+            "minimum binary value")
+      (t/is (Arrays/equals (byte-array [0xFF]) ^bytes (:max result))
+            "maximum binary value (unsigned comparison)")))
+
+  (t/testing "unsupported type in min/max still errors"
+    (t/is (anomalous? [:unsupported nil #"Unsupported type in min/max aggregate"]
+                      (tu/query-ra '[:group-by {:columns [{min (min a)}]}
+                                     [:table {:rows [{:a [1 2]} {:a [3 4]}]}]])))))
+
 (t/deftest test-min-max-temporal-399
   (t/is (= [{:min #xt/duration "PT0.0001S"
              :max #xt/duration "PT15M"}]
@@ -480,12 +575,11 @@
                (update :res set)))))
 
 (t/deftest test-throws-for-variable-width-minmax-340
-  ;; HACK only for now, until we support it properly
   (t/is (thrown-with-msg? RuntimeException #"Incomparable types in min/max aggregate"
                           (tu/query-ra '[:group-by {:columns [{min (min a)}]}
                                          [:table {:rows [{:a 32} {:a "foo"}]}]])))
 
-  (t/is (thrown-with-msg? RuntimeException #"Unsupported type in min/max aggregate"
+  (t/is (= [{:min "32"}]
                           (tu/query-ra '[:group-by {:columns [{min (min a)}]}
                                          [:table {:rows [{:a "32"} {:a "foo"}]}]]))))
 

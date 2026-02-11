@@ -29,9 +29,11 @@ class Utf8Vector private constructor(
 
     override val metadataFlavours get() = listOf(this)
 
-    override fun openSlice(al: BufferAllocator) =
-        Utf8Vector(
+    override fun openSlice(al: BufferAllocator): Utf8Vector {
+        compactSetValues()
+        return Utf8Vector(
             al, name, valueCount,
             validityBuffer?.openSlice(al), offsetBuffer.openSlice(al), dataBuffer.openSlice(al)
         )
+    }
 }

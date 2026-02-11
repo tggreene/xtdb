@@ -29,9 +29,11 @@ class VarBinaryVector private constructor(
 
     override val metadataFlavours get() = listOf(this)
 
-    override fun openSlice(al: BufferAllocator) =
-        VarBinaryVector(
+    override fun openSlice(al: BufferAllocator): VarBinaryVector {
+        compactSetValues()
+        return VarBinaryVector(
             al, name, valueCount,
             validityBuffer?.openSlice(al), offsetBuffer.openSlice(al), dataBuffer.openSlice(al)
         )
+    }
 }
