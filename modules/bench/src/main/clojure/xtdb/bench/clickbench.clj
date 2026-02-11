@@ -207,7 +207,7 @@
 
                             {:t :call, :stage :queries
                              :f (fn [{:keys [node]}]
-                                  (doseq [query (take 1 queries)]
+                                  (doseq [query queries]
                                     (log/info "Running query:" query)
                                     (xt/q node query)))}])}]})
 
