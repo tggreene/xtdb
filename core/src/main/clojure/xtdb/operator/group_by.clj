@@ -142,11 +142,10 @@
   (StdDevSamp. (str from-name) (str to-name) zero-row?))
 
 (defn- assert-supported-min-max-type [to-type]
-  ;; TODO variable-width types - it's reasonable to want (e.g.) `(min <string-col>)`
   (let [to-col-type (types/vec-type->col-type to-type)
         to-col-type-head (types/col-type-head to-col-type)]
     (when-not (or (isa? types/col-type-hierarchy to-col-type-head :num)
-                  (contains? #{:duration :date :timestamp-local :timestamp-tz :time-local :null}
+                  (contains? #{:duration :date :timestamp-local :timestamp-tz :time-local :utf8 :varbinary :keyword :null}
                              to-col-type-head))
       (throw (err/unsupported :xtdb.group-by/unsupported-min-max-type
                               "Unsupported type in min/max aggregate"
