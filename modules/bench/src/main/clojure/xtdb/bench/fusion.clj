@@ -384,21 +384,37 @@
 (defn exec-cumulative-registration [node start end opts]
   (xt/q node (query-cumulative-registration-sqlvec {:start start :end end}) opts))
 
-(defn ->readings-stress-stage
-  "Run readings-for-system N times with 5s pauses between iterations."
-  [n]
-  {:t :call, :stage :readings-stress
+(defn exec-query-by-name
+  "Dispatch a named query."
+  [node query-name system-id min-valid-time max-valid-time]
+  (case query-name
+    "readings-for-system" (exec-readings-for-system node system-id min-valid-time max-valid-time {})
+    "system-settings" (exec-system-settings node system-id {})
+    "system-count-over-time" (exec-system-count-over-time node min-valid-time max-valid-time {})
+    "readings-range-bins" (exec-readings-range-bins node min-valid-time max-valid-time {})
+    "cumulative-registration" (exec-cumulative-registration node min-valid-time max-valid-time {})))
+
+(defn ->query-stress-stage
+  "Run a named query N times with 5s pauses between iterations."
+  [query-name n]
+  {:t :call, :stage :query-stress
    :f (fn [{:keys [node random !state]}]
-        (let [{:keys [system-ids min-valid-time max-valid-time]} @!state]
+        (let [{:keys [system-ids min-valid-time max-valid-time]} @!state
+              mem-before (util/used-netty-memory)]
+          (log/infof "query-stress [%s] starting %d iterations, netty=%dMB"
+                     query-name n (quot mem-before 1048576))
           (doseq [i (range n)]
             (let [sid (random/uniform-nth random system-ids)
                   start (System/nanoTime)]
-              (exec-readings-for-system node sid min-valid-time max-valid-time {})
-              (log/infof "readings-stress iteration %d/%d system=%s took=%dms"
-                         (inc i) n sid
-                         (quot (- (System/nanoTime) start) 1000000))
-              (when (< (inc i) n)
-                (Thread/sleep 5000))))))})
+              (exec-query-by-name node query-name sid min-valid-time max-valid-time)
+              (let [elapsed-ms (quot (- (System/nanoTime) start) 1000000)
+                    mem-after (util/used-netty-memory)]
+                (log/infof "query-stress [%s] iteration %d/%d took=%dms netty=%dMB (delta=%+dMB)"
+                           query-name (inc i) n elapsed-ms
+                           (quot mem-after 1048576)
+                           (quot (- mem-after mem-before) 1048576))
+                (when (< (inc i) n)
+                  (Thread/sleep 5000)))))))})
 
 ;; OLTP mixed workload procs
 
@@ -502,13 +518,15 @@
    ["-d" "--duration DURATION" "OLTP phase duration" :parse-fn #(Duration/parse %) :default (Duration/parse "PT30S")]
    ["-t" "--threads THREADS" "OLTP thread count" :parse-fn parse-long :default 4]
    [nil "--staged-only" "Run staged workload only, skip OLTP" :id :staged-only?]
-   [nil "--query-stress N" "Run readings-for-system N times then exit" :parse-fn parse-long]
+   [nil "--query-stress N" "Run a query N times then exit (default: readings-for-system)" :parse-fn parse-long]
+   [nil "--stress-query QUERY" "Query to stress test (readings-for-system, cumulative-registration, etc)"]
    [nil "--stress-procs PROCS" "Comma-separated OLTP procs to include (default: all)"
     :parse-fn #(set (str/split % #","))]
    ["-h" "--help"]])
 
 (defmethod b/->benchmark :fusion [_ {:keys [devices readings batch-size update-batch-size
-                                            updates-per-system seed no-load? duration threads staged-only? query-stress stress-procs]
+                                            updates-per-system seed no-load? duration threads staged-only?
+                                            query-stress stress-query stress-procs]
                                      :or {seed 0 batch-size 1000 update-batch-size 30
                                           updates-per-system 10 duration (Duration/parse "PT30S") threads 4}}]
   (let [^Duration duration (cond-> duration (string? duration) Duration/parse)
@@ -525,14 +543,14 @@
     (log/info {:devices devices :readings readings :batch-size batch-size
                :update-batch-size update-batch-size :updates-per-system updates-per-system
                :duration duration :threads threads :staged-only? staged-only?
-               :query-stress query-stress :stress-procs stress-procs})
+               :query-stress query-stress :stress-query stress-query :stress-procs stress-procs})
     {:title "Fusion benchmark"
      :benchmark-type :fusion
      :seed seed
      :parameters {:devices devices :readings readings :batch-size batch-size
                   :update-batch-size update-batch-size :updates-per-system updates-per-system
                   :duration duration :threads threads :staged-only? staged-only?
-                  :query-stress query-stress :stress-procs stress-procs}
+                  :query-stress query-stress :stress-query stress-query :stress-procs stress-procs}
      :->state #(do {:!state (atom {:system-ids system-ids
                                    :base-time base-time
                                    :!reading-idx (AtomicLong. readings)})})
@@ -560,7 +578,7 @@
                                           :min-valid-time min-vt})))}]
 
              (when query-stress
-               [(->readings-stress-stage query-stress)])
+               [(->query-stress-stage (or stress-query "readings-for-system") query-stress)])
 
              (when (and staged-only? (not query-stress))
                [;; Staged queries (sequential, non-interleaved)
@@ -641,4 +659,14 @@
   (let [path (util/->path "/tmp/fusion-bench")]
     (-> (b/->benchmark :fusion {:devices 100 :readings 100 :batch-size 50
                                 :update-batch-size 10 :updates-per-system 5})
+        (b/run-benchmark {:node-dir path}))))
+
+(t/deftest ^:benchmark test-cumulative-registration-memory
+  (let [path (util/->path "/tmp/fusion-registration-mem")
+        devices 1000
+        readings 100
+        iterations 5]
+    (-> (b/->benchmark :fusion {:devices devices :readings readings :batch-size 500
+                                :update-batch-size 10 :updates-per-system 5
+                                :query-stress iterations :stress-query "cumulative-registration"})
         (b/run-benchmark {:node-dir path}))))
