@@ -460,14 +460,24 @@
     (when (and min-valid-time max-valid-time)
       (exec-cumulative-registration node min-valid-time max-valid-time {}))))
 
+(defn wrap-with-logging [op-name f]
+  (let [f (b/wrap-in-catch f)]
+    (fn [ctx]
+      (log/infof "oltp-op: %s starting" op-name)
+      (let [start (System/nanoTime)
+            result (f ctx)
+            elapsed-ms (quot (- (System/nanoTime) start) 1000000)]
+        (log/infof "oltp-op: %s succeeded (%dms)" op-name elapsed-ms)
+        result))))
+
 (def all-oltp-choices
-  {"insert-readings"       [20.0 {:t :call, :transaction :insert-readings, :f (b/wrap-in-catch proc-insert-readings)}]
-   "update-system"         [10.0 {:t :call, :transaction :update-system, :f (b/wrap-in-catch proc-update-system)}]
-   "query-system-settings" [25.0 {:t :call, :transaction :query-system-settings, :f (b/wrap-in-catch proc-query-system-settings)}]
-   "query-readings"        [20.0 {:t :call, :transaction :query-readings, :f (b/wrap-in-catch proc-query-readings)}]
-   "query-system-count"    [10.0 {:t :call, :transaction :query-system-count, :f (b/wrap-in-catch proc-query-system-count)}]
-   "query-range-bins"      [10.0 {:t :call, :transaction :query-range-bins, :f (b/wrap-in-catch proc-query-range-bins)}]
-   "query-registration"    [5.0  {:t :call, :transaction :query-registration, :f (b/wrap-in-catch proc-query-registration)}]})
+  {"insert-readings"       [20.0 {:t :call, :transaction :insert-readings, :f (wrap-with-logging "insert-readings" proc-insert-readings)}]
+   "update-system"         [10.0 {:t :call, :transaction :update-system, :f (wrap-with-logging "update-system" proc-update-system)}]
+   "query-system-settings" [25.0 {:t :call, :transaction :query-system-settings, :f (wrap-with-logging "query-system-settings" proc-query-system-settings)}]
+   "query-readings"        [20.0 {:t :call, :transaction :query-readings, :f (wrap-with-logging "query-readings" proc-query-readings)}]
+   "query-system-count"    [10.0 {:t :call, :transaction :query-system-count, :f (wrap-with-logging "query-system-count" proc-query-system-count)}]
+   "query-range-bins"      [10.0 {:t :call, :transaction :query-range-bins, :f (wrap-with-logging "query-range-bins" proc-query-range-bins)}]
+   "query-registration"    [5.0  {:t :call, :transaction :query-registration, :f (wrap-with-logging "query-registration" proc-query-registration)}]})
 
 (defn ->query-stage [query-type]
   {:t :call
