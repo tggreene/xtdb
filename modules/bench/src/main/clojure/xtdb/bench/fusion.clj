@@ -225,6 +225,23 @@
                                                                      base-time))
                                            test-case-ids))]))))})
 
+(defn ->init-tables-minimal-stage
+  "Minimal init: only system + site records (for query-stress mode)."
+  [system-ids site-ids batch-size base-time]
+  {:t :call, :stage :init-tables
+   :f (fn [{:keys [node random]}]
+        (log/infof "Inserting %d site records (minimal)" (count site-ids))
+        (doseq [batch (partition-all batch-size site-ids)]
+          (xt/submit-tx node [(into [:put-docs :site] (map #(generate-site random %) batch))]))
+
+        (log/infof "Inserting %d system records (minimal)" (count system-ids))
+        (doseq [[sys-batch site-batch] (map vector
+                                             (partition-all batch-size system-ids)
+                                             (partition-all batch-size site-ids))]
+          (xt/submit-tx node [(into [:put-docs :system]
+                                    (map (fn [sid site-id] (generate-system-record random sid site-id base-time))
+                                         sys-batch site-batch))])))})
+
 (defn ->readings-docs [rng system-ids reading-idx start end]
   (into [:put-docs {:into :readings :valid-from start :valid-to end}]
         (for [system-id system-ids]
@@ -367,6 +384,22 @@
 (defn exec-cumulative-registration [node start end opts]
   (xt/q node (query-cumulative-registration-sqlvec {:start start :end end}) opts))
 
+(defn ->readings-stress-stage
+  "Run readings-for-system N times with 5s pauses between iterations."
+  [n]
+  {:t :call, :stage :readings-stress
+   :f (fn [{:keys [node random !state]}]
+        (let [{:keys [system-ids min-valid-time max-valid-time]} @!state]
+          (doseq [i (range n)]
+            (let [sid (random/uniform-nth random system-ids)
+                  start (System/nanoTime)]
+              (exec-readings-for-system node sid min-valid-time max-valid-time {})
+              (log/infof "readings-stress iteration %d/%d system=%s took=%dms"
+                         (inc i) n sid
+                         (quot (- (System/nanoTime) start) 1000000))
+              (when (< (inc i) n)
+                (Thread/sleep 5000))))))})
+
 ;; OLTP mixed workload procs
 
 (defn proc-insert-readings
@@ -450,10 +483,11 @@
    ["-d" "--duration DURATION" "OLTP phase duration" :parse-fn #(Duration/parse %) :default (Duration/parse "PT30S")]
    ["-t" "--threads THREADS" "OLTP thread count" :parse-fn parse-long :default 4]
    [nil "--staged-only" "Run staged workload only, skip OLTP" :id :staged-only?]
+   [nil "--query-stress N" "Run readings-for-system N times then exit" :parse-fn parse-long]
    ["-h" "--help"]])
 
 (defmethod b/->benchmark :fusion [_ {:keys [devices readings batch-size update-batch-size
-                                            updates-per-system seed no-load? duration threads staged-only?]
+                                            updates-per-system seed no-load? duration threads staged-only? query-stress]
                                      :or {seed 0 batch-size 1000 update-batch-size 30
                                           updates-per-system 10 duration (Duration/parse "PT30S") threads 4}}]
   (let [^Duration duration (cond-> duration (string? duration) Duration/parse)
@@ -469,19 +503,23 @@
         test-case-ids (generate-ids setup-rng "TC" 5)] ; 5 test cases per suite
     (log/info {:devices devices :readings readings :batch-size batch-size
                :update-batch-size update-batch-size :updates-per-system updates-per-system
-               :duration duration :threads threads :staged-only? staged-only?})
+               :duration duration :threads threads :staged-only? staged-only?
+               :query-stress query-stress})
     {:title "Fusion benchmark"
      :benchmark-type :fusion
      :seed seed
      :parameters {:devices devices :readings readings :batch-size batch-size
                   :update-batch-size update-batch-size :updates-per-system updates-per-system
-                  :duration duration :threads threads :staged-only? staged-only?}
+                  :duration duration :threads threads :staged-only? staged-only?
+                  :query-stress query-stress}
      :->state #(do {:!state (atom {:system-ids system-ids
                                    :base-time base-time
                                    :!reading-idx (AtomicLong. readings)})})
      :tasks (concat
              (when-not no-load?
-               [(->init-tables-stage system-ids site-ids organisation-ids device-series-ids device-model-ids device-ids test-suite-id test-case-ids update-batch-size base-time)
+               [(if query-stress
+                  (->init-tables-minimal-stage system-ids site-ids batch-size base-time)
+                  (->init-tables-stage system-ids site-ids organisation-ids device-series-ids device-model-ids device-ids test-suite-id test-case-ids update-batch-size base-time))
                 (->ingest-interleaved-stage system-ids readings updates-per-system batch-size update-batch-size base-time)
                 (->sync-stage)
                 (->compact-stage)])
@@ -500,7 +538,10 @@
                                           :max-valid-time max-vt
                                           :min-valid-time min-vt})))}]
 
-             (when staged-only?
+             (when query-stress
+               [(->readings-stress-stage query-stress)])
+
+             (when (and staged-only? (not query-stress))
                [;; Staged queries (sequential, non-interleaved)
                 (->query-stage :system-settings)
                 (->query-stage :readings-for-system)
@@ -508,7 +549,7 @@
                 (->query-stage :readings-range-bins)
                 (->query-stage :cumulative-registration)])
 
-             (when-not staged-only?
+             (when (and (not staged-only?) (not query-stress))
                [;; OLTP mixed workload - interleaved reads and writes
                 {:t :concurrently
                  :stage :oltp
