@@ -556,9 +556,7 @@
                                    :!reading-idx (AtomicLong. readings)})})
      :tasks (concat
              (when-not no-load?
-               [(if query-stress
-                  (->init-tables-minimal-stage system-ids site-ids batch-size base-time)
-                  (->init-tables-stage system-ids site-ids organisation-ids device-series-ids device-model-ids device-ids test-suite-id test-case-ids update-batch-size base-time))
+               [(->init-tables-stage system-ids site-ids organisation-ids device-series-ids device-model-ids device-ids test-suite-id test-case-ids update-batch-size base-time)
                 (->ingest-interleaved-stage system-ids readings updates-per-system batch-size update-batch-size base-time)
                 (->sync-stage)
                 (->compact-stage)])
