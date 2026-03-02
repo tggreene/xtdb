@@ -460,6 +460,15 @@
     (when (and min-valid-time max-valid-time)
       (exec-cumulative-registration node min-valid-time max-valid-time {}))))
 
+(def all-oltp-choices
+  {"insert-readings"       [20.0 {:t :call, :transaction :insert-readings, :f (b/wrap-in-catch proc-insert-readings)}]
+   "update-system"         [10.0 {:t :call, :transaction :update-system, :f (b/wrap-in-catch proc-update-system)}]
+   "query-system-settings" [25.0 {:t :call, :transaction :query-system-settings, :f (b/wrap-in-catch proc-query-system-settings)}]
+   "query-readings"        [20.0 {:t :call, :transaction :query-readings, :f (b/wrap-in-catch proc-query-readings)}]
+   "query-system-count"    [10.0 {:t :call, :transaction :query-system-count, :f (b/wrap-in-catch proc-query-system-count)}]
+   "query-range-bins"      [10.0 {:t :call, :transaction :query-range-bins, :f (b/wrap-in-catch proc-query-range-bins)}]
+   "query-registration"    [5.0  {:t :call, :transaction :query-registration, :f (b/wrap-in-catch proc-query-registration)}]})
+
 (defn ->query-stage [query-type]
   {:t :call
    :stage (keyword (str "query-" (name query-type)))
@@ -484,10 +493,12 @@
    ["-t" "--threads THREADS" "OLTP thread count" :parse-fn parse-long :default 4]
    [nil "--staged-only" "Run staged workload only, skip OLTP" :id :staged-only?]
    [nil "--query-stress N" "Run readings-for-system N times then exit" :parse-fn parse-long]
+   [nil "--stress-procs PROCS" "Comma-separated OLTP procs to include (default: all)"
+    :parse-fn #(set (str/split % #","))]
    ["-h" "--help"]])
 
 (defmethod b/->benchmark :fusion [_ {:keys [devices readings batch-size update-batch-size
-                                            updates-per-system seed no-load? duration threads staged-only? query-stress]
+                                            updates-per-system seed no-load? duration threads staged-only? query-stress stress-procs]
                                      :or {seed 0 batch-size 1000 update-batch-size 30
                                           updates-per-system 10 duration (Duration/parse "PT30S") threads 4}}]
   (let [^Duration duration (cond-> duration (string? duration) Duration/parse)
@@ -504,14 +515,14 @@
     (log/info {:devices devices :readings readings :batch-size batch-size
                :update-batch-size update-batch-size :updates-per-system updates-per-system
                :duration duration :threads threads :staged-only? staged-only?
-               :query-stress query-stress})
+               :query-stress query-stress :stress-procs stress-procs})
     {:title "Fusion benchmark"
      :benchmark-type :fusion
      :seed seed
      :parameters {:devices devices :readings readings :batch-size batch-size
                   :update-batch-size update-batch-size :updates-per-system updates-per-system
                   :duration duration :threads threads :staged-only? staged-only?
-                  :query-stress query-stress}
+                  :query-stress query-stress :stress-procs stress-procs}
      :->state #(do {:!state (atom {:system-ids system-ids
                                    :base-time base-time
                                    :!reading-idx (AtomicLong. readings)})})
@@ -550,27 +561,23 @@
                 (->query-stage :cumulative-registration)])
 
              (when (and (not staged-only?) (not query-stress))
-               [;; OLTP mixed workload - interleaved reads and writes
-                {:t :concurrently
-                 :stage :oltp
-                 :duration duration
-                 :join-wait (Duration/ofMinutes 1)
-                 :thread-tasks [{:t :pool
-                                 :duration duration
-                                 :join-wait (Duration/ofMinutes 1)
-                                 :thread-count threads
-                                 :think Duration/ZERO
-                                 :pooled-task {:t :pick-weighted
-                                               :choices [;; Writes (30%)
-                                                         [20.0 {:t :call, :transaction :insert-readings, :f (b/wrap-in-catch proc-insert-readings)}]
-                                                         [10.0 {:t :call, :transaction :update-system, :f (b/wrap-in-catch proc-update-system)}]
-                                                         ;; Reads (70%)
-                                                         [25.0 {:t :call, :transaction :query-system-settings, :f (b/wrap-in-catch proc-query-system-settings)}]
-                                                         [20.0 {:t :call, :transaction :query-readings, :f (b/wrap-in-catch proc-query-readings)}]
-                                                         [10.0 {:t :call, :transaction :query-system-count, :f (b/wrap-in-catch proc-query-system-count)}]
-                                                         [10.0 {:t :call, :transaction :query-range-bins, :f (b/wrap-in-catch proc-query-range-bins)}]
-                                                         [5.0 {:t :call, :transaction :query-registration, :f (b/wrap-in-catch proc-query-registration)}]]}}]}
-                {:t :call, :stage :sync-after-oltp, :f (fn [{:keys [node]}] (b/sync-node node))}]))}))
+               (let [choices (if stress-procs
+                               (do (log/infof "OLTP filtered to procs: %s" stress-procs)
+                                   (vec (keep #(when (stress-procs (key %)) (val %)) all-oltp-choices)))
+                               (vec (vals all-oltp-choices)))]
+                 [;; OLTP mixed workload - interleaved reads and writes
+                  {:t :concurrently
+                   :stage :oltp
+                   :duration duration
+                   :join-wait (Duration/ofMinutes 1)
+                   :thread-tasks [{:t :pool
+                                   :duration duration
+                                   :join-wait (Duration/ofMinutes 1)
+                                   :thread-count threads
+                                   :think Duration/ZERO
+                                   :pooled-task {:t :pick-weighted
+                                                 :choices choices}}]}
+                  {:t :call, :stage :sync-after-oltp, :f (fn [{:keys [node]}] (b/sync-node node))}])))}))
 
 ;; ============================================================================
 ;; Tests
