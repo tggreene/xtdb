@@ -1391,16 +1391,17 @@
        (* minor 1000)
        patch)))
 
-(defn current-setting [setting-name]
+(defn current-setting ^String [setting-name]
   (case setting-name
-    "server_version_num" 160000
+    "server_version_num" "160000"
+    "search_path" "public"
     (throw (err/unsupported ::unsupported-setting (str "Setting not supported: " setting-name)
                             {:setting-name setting-name}))))
 
 (defmethod codegen-call [:current_setting :utf8] [_]
-  {:return-type #xt/type :i64
+  {:return-type #xt/type :utf8
    :->call-code (fn [[setting-name]]
-                  `(current-setting (resolve-string ~setting-name)))})
+                  `(resolve-utf8-buf (current-setting (resolve-string ~setting-name))))})
 
 (defn sleep [^long duration unit]
   (Thread/sleep (long (* duration (quot (types/ts-units-per-second unit) 1000)))))
@@ -1557,6 +1558,110 @@
    :->call-code (fn [[s target replacement]]
                   `(-> (.replace (resolve-string ~s) (resolve-string ~target) (resolve-string ~replacement))
                        (resolve-utf8-buf)))})
+
+;; SQL keywords derived from SqlLexer's vocabulary at load time.
+;; Used by quote_ident to determine which identifiers need quoting.
+(def ^:private ^java.util.Set sql-keywords
+  (let [vocab (xtdb.antlr.SqlLexer/VOCABULARY)
+        ;; non-keyword token names to exclude (punctuation, operators, literals, identifiers)
+        excluded #{"BLOCK_COMMENT" "LINE_COMMENT" "WHITESPACE"
+                   "UNSIGNED_FLOAT" "UNSIGNED_INTEGER" "CHARACTER_STRING" "C_ESCAPES_STRING"
+                   "BINARY_STRING" "POSTGRES_PARAMETER_SPECIFICATION"
+                   "COMMA" "DOT" "SEMI" "COLON" "QUESTION"
+                   "LPAREN" "RPAREN" "LBRACK" "RBRACK" "LBRACE" "RBRACE"
+                   "PLUS" "MINUS" "ASTERISK" "SOLIDUS" "PERCENT" "AMPERSAND" "TILDE"
+                   "CONCAT" "EQUAL" "NOT_EQUAL" "LT" "GT" "GE" "LE" "LT_GT"
+                   "BITWISE_OR" "BITWISE_XOR" "BITWISE_SHIFT_LEFT" "BITWISE_SHIFT_RIGHT"
+                   "JSON_ARROW" "JSON_ARROW_TEXT" "JSON_PATH" "JSON_PATH_TEXT"
+                   "PG_CAST" "PG_REGEX_I" "PG_NOT_REGEX" "PG_NOT_REGEX_I"
+                   "REGULAR_IDENTIFIER" "DELIMITED_IDENTIFIER"
+                   "DOLLAR_TAG" "DM_TEXT" "DM_END_TAG"}
+        ks (java.util.HashSet.)]
+    (dotimes [i (.getMaxTokenType vocab)]
+      (when-let [sym (.getSymbolicName vocab (inc i))]
+        (when-not (excluded sym)
+          (.add ks (.toLowerCase sym java.util.Locale/ROOT)))))
+    ks))
+
+(defn quote-ident ^String [^String s]
+  (if (and (re-matches #"[a-z_][a-z0-9_$]*" s)
+           (not (.contains sql-keywords s)))
+    s
+    (str \" (.replace s "\"" "\"\"") \")))
+
+(defmethod codegen-call [:quote_ident :utf8] [_]
+  {:return-type #xt/type :utf8
+   :->call-code (fn [[s]]
+                  `(resolve-utf8-buf (quote-ident (resolve-string ~s))))})
+
+(defn- strings->list-reader ^xtdb.arrow.ListValueReader [^objects arr]
+  (let [box (ValueBox.)
+        bufs (object-array (mapv #(resolve-utf8-buf ^String %) arr))]
+    (reify ListValueReader
+      (size [_] (alength bufs))
+      (nth [_ idx]
+        (doto box
+          (.writeBytes (.duplicate ^ByteBuffer (aget bufs idx))))))))
+
+(defn string-to-array ^xtdb.arrow.ListValueReader [^String s ^String delimiter]
+  (let [parts (.split s (java.util.regex.Pattern/quote delimiter) -1)]
+    (strings->list-reader parts)))
+
+(defmethod codegen-call [:string_to_array :utf8 :utf8] [_]
+  {:return-type #xt/type [:list :utf8]
+   :continue-call (fn [f [s delim]]
+                    (f #xt/type [:list :utf8]
+                       `(string-to-array (resolve-string ~s) (resolve-string ~delim))))})
+
+(defn- scan-quoted-ident
+  "Scans a quoted identifier starting after the opening quote at position `start`.
+  Returns [parsed-string position-after-closing-quote]."
+  ^clojure.lang.IPersistentVector [^String s ^long start]
+  (let [len (.length s)
+        sb (StringBuilder.)]
+    (loop [j start]
+      (when (>= j len)
+        (throw (IllegalArgumentException. (str "unterminated quoted identifier in: " s))))
+      (let [c (.charAt s j)]
+        (if (= c \")
+          (if (and (< (inc j) len) (= (.charAt s (inc j)) \"))
+            (do (.append sb \") (recur (+ j 2)))
+            [(.toString sb) (inc j)])
+          (do (.append sb c) (recur (inc j))))))))
+
+(defn parse-ident ^xtdb.arrow.ListValueReader [^String s]
+  (let [len (.length s)]
+    (loop [i 0, parts (transient [])]
+      (if (>= i len)
+        (strings->list-reader (into-array Object (persistent! parts)))
+
+        (if (= (.charAt s i) \")
+          ;; quoted identifier
+          (let [[part next-i] (scan-quoted-ident s (inc i))
+                parts (conj! parts part)]
+            (if (>= ^long next-i len)
+              (strings->list-reader (into-array Object (persistent! parts)))
+              (if (= (.charAt s ^long next-i) \.)
+                (recur (inc ^long next-i) parts)
+                (throw (IllegalArgumentException.
+                        (str "unexpected character after quoted identifier in: " s))))))
+
+          ;; unquoted identifier — scan to next dot, fold to lowercase
+          (let [dot-idx (.indexOf s (int \.) i)
+                end (if (neg? dot-idx) len dot-idx)
+                part (.toLowerCase (.substring s i end) java.util.Locale/ROOT)]
+            (when (zero? (.length part))
+              (throw (IllegalArgumentException. (str "zero-length identifier in: " s))))
+            (let [parts (conj! parts part)]
+              (if (neg? dot-idx)
+                (strings->list-reader (into-array Object (persistent! parts)))
+                (recur (inc end) parts)))))))))
+
+(defmethod codegen-call [:parse_ident :utf8] [_]
+  {:return-type #xt/type [:list :utf8]
+   :continue-call (fn [f [s]]
+                    (f #xt/type [:list :utf8]
+                       `(parse-ident (resolve-string ~s))))})
 
 (defmethod codegen-call [:overlay :varbinary :varbinary :int :int] [_]
   {:return-type #xt/type :varbinary
@@ -2035,6 +2140,36 @@
                                                "Unsupported: ARRAY_UPPER for dimension != 1"
                                                {:dim ~dim})))
 
+                     (.size ~arr)))})
+
+(defmethod codegen-call [:array_lower :list :i64] [_]
+  {:return-type #xt/type :i32
+   :->call-code (fn [[_arr dim]]
+                  `(do
+                     (when-not (= ~dim 1)
+                       (throw (err/unsupported :xtdb.expression/array-dimension-error
+                                               "Unsupported: ARRAY_LOWER for dimension != 1"
+                                               {:dim ~dim})))
+                     (int 1)))})
+
+(defmethod codegen-call [:array_upper :list :i64] [_]
+  {:return-type #xt/type :i32
+   :->call-code (fn [[arr dim]]
+                  `(do
+                     (when-not (= ~dim 1)
+                       (throw (err/unsupported :xtdb.expression/array-dimension-error
+                                               "Unsupported: ARRAY_UPPER for dimension != 1"
+                                               {:dim ~dim})))
+                     (.size ~arr)))})
+
+(defmethod codegen-call [:array_length :list :i64] [_]
+  {:return-type #xt/type :i32
+   :->call-code (fn [[arr dim]]
+                  `(do
+                     (when-not (= ~dim 1)
+                       (throw (err/unsupported :xtdb.expression/array-dimension-error
+                                               "Unsupported: ARRAY_LENGTH for dimension != 1"
+                                               {:dim ~dim})))
                      (.size ~arr)))})
 
 (defn trim-array-view ^xtdb.arrow.ListValueReader [^long trimmed-value-count ^ListValueReader lst]
