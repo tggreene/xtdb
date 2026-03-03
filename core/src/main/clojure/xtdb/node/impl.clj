@@ -6,6 +6,7 @@
             [xtdb.basis :as basis]
             [xtdb.error :as err]
             [xtdb.garbage-collector]
+            [xtdb.memory]
             [xtdb.log :as xt-log]
             [xtdb.metrics :as metrics]
             [xtdb.protocols :as xtp]
@@ -366,6 +367,7 @@
          :xtdb.cache/memory (.getMemoryCache opts)
          :xtdb.cache/disk (.getDiskCache opts)
          :xtdb/garbage-collector (.getGarbageCollector opts)
+         :xtdb/memory-trimmer (.getMemoryTrimmer opts)
          :xtdb/modules (.getModules opts)}
         (cond-> srv-config (assoc :xtdb.pgwire/server srv-config)
                 flight-sql-config (assoc :xtdb.flight-sql/server flight-sql-config)

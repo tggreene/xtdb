@@ -76,6 +76,9 @@
 (defmethod apply-config! :garbage-collector [config _ opts]
   (apply-config! config :xtdb/garbage-collector opts))
 
+(defmethod apply-config! :memory-trimmer [config _ opts]
+  (apply-config! config :xtdb/memory-trimmer opts))
+
 (defmethod apply-config! :tx-source [config _ opts]
   (apply-config! config :xtdb/tx-source opts))
 

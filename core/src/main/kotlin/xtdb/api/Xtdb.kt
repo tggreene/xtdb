@@ -77,6 +77,7 @@ interface Xtdb : DataSource, AdbcDatabase, AutoCloseable {
         val compactor: CompactorConfig = CompactorConfig(),
         var authn: Authenticator.Factory = UserTable(),
         var garbageCollector: GarbageCollectorConfig = GarbageCollectorConfig(),
+        var memoryTrimmer: MemoryTrimmerConfig = MemoryTrimmerConfig(),
         var tracer: TracerConfig = TracerConfig(),
         var txSource: TxSourceConfig? = null,
         var readOnlyDatabases: Boolean = false,
@@ -121,6 +122,13 @@ interface Xtdb : DataSource, AdbcDatabase, AutoCloseable {
         @JvmSynthetic
         fun garbageCollector(configure: GarbageCollectorConfig.() -> Unit) =
             garbageCollector(GarbageCollectorConfig().also(configure))
+
+        fun memoryTrimmer(memoryTrimmer: MemoryTrimmerConfig) =
+            apply { this.memoryTrimmer = memoryTrimmer }
+
+        @JvmSynthetic
+        fun memoryTrimmer(configure: MemoryTrimmerConfig.() -> Unit) =
+            memoryTrimmer(MemoryTrimmerConfig().also(configure))
 
         fun txSource(txSource: TxSourceConfig) = apply { this.txSource = txSource }
 
