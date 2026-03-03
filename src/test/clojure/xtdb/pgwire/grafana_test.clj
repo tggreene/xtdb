@@ -55,7 +55,7 @@
              (xt/q tu/*node* "SELECT CURRENT_USER AS u")))))
 
 (t/deftest grafana-table-discovery-test
-  (t/testing "Grafana's table discovery query (simplified) runs without error"
+  (t/testing "simplified table discovery query returns user tables"
     (xt/execute-tx tu/*node* [[:sql "INSERT INTO foo (_id) VALUES (1)"]])
     (let [results (xt/q tu/*node*
                     "SELECT
@@ -72,3 +72,10 @@
                      )
                      ORDER BY 1")]
       (t/is (some #(= "foo" (:table %)) results)))))
+
+(t/deftest grafana-query-rewrite-test
+  (t/testing "Grafana's real table discovery query is rewritten by pgwire"
+    (let [grafana-query "SELECT\n  CASE WHEN quote_ident(table_schema) IN (\n    SELECT\n      CASE WHEN trim(s[i]) = '\"$user\"' THEN CURRENT_USER ELSE trim(s[i]) END\n    FROM\n      generate_series(\n        array_lower(string_to_array(current_setting('search_path'), ','), 1),\n        array_upper(string_to_array(current_setting('search_path'), ','), 1)\n      ) AS i,\n      string_to_array(current_setting('search_path'), ',') s\n  )\n  THEN quote_ident(table_name)\n  ELSE quote_ident(table_schema) || '.' || quote_ident(table_name)\n  END AS \"table\"\nFROM information_schema.tables\nWHERE quote_ident(table_schema) NOT IN (\n  'information_schema', 'pg_catalog',\n  '_timescaledb_cache', '_timescaledb_catalog',\n  '_timescaledb_internal', '_timescaledb_config',\n  'timescaledb_information', 'timescaledb_experimental'\n)\nORDER BY 1"
+          rewritten (#'xtdb.pgwire/apply-grafana-rewrites grafana-query)]
+      (t/is (not= grafana-query rewritten) "query should be rewritten")
+      (t/is (re-find #"IN \('public'\)" rewritten) "should contain simplified search_path"))))

@@ -699,6 +699,24 @@
    "SELECT n.oid,n.*,d.description FROM pg_catalog.pg_namespace n LEFT OUTER JOIN pg_catalog.pg_description d ON d.objoid=n.oid AND d.objsubid=0 AND d.classoid='pg_namespace'::regclass ORDER BY nspname"
    "SELECT n.oid,n.nspname,n.nspowner,n.nspacl,d.description FROM pg_catalog.pg_namespace n LEFT OUTER JOIN pg_catalog.pg_description d ON d.objoid=n.oid AND d.objsubid=0 AND d.classoid='pg_namespace'::regclass ORDER BY nspname"})
 
+(def ^:private grafana-rewrites
+  "Pattern-based query rewrites for Grafana PostgreSQL plugin.
+  Grafana sends complex introspection queries that use PG-specific FROM-clause
+  function calls (e.g. string_to_array in FROM) which XTDB's parser doesn't support.
+  We rewrite these to semantically equivalent simpler SQL."
+  [;; Grafana table discovery - uses string_to_array/generate_series in FROM to
+   ;; dynamically resolve search_path. Since XTDB's search_path is always 'public',
+   ;; we can simplify the search_path subquery to a literal IN ('public').
+   {:pattern #"(?is)SELECT\s+CASE\s+WHEN\s+quote_ident\(table_schema\)\s+IN\s*\(\s*SELECT.*?string_to_array\(current_setting\('search_path'\).*?FROM\s+information_schema\.tables\b"
+    :replacement "SELECT CASE WHEN quote_ident(table_schema) IN ('public') THEN quote_ident(table_name) ELSE quote_ident(table_schema) || '.' || quote_ident(table_name) END AS \"table\" FROM information_schema.tables WHERE quote_ident(table_schema) NOT IN ('information_schema', 'pg_catalog', '_timescaledb_cache', '_timescaledb_catalog', '_timescaledb_internal', '_timescaledb_config', 'timescaledb_information', 'timescaledb_experimental') ORDER BY 1"}])
+
+(defn- apply-grafana-rewrites [sql]
+  (reduce (fn [s {:keys [pattern replacement]}]
+            (if (re-find pattern s)
+              (reduced replacement)
+              s))
+          sql grafana-rewrites))
+
 
 
 (def ^:private canned-responses
@@ -731,7 +749,7 @@
 (defn parse-sql [sql]
   (log/debug "Interpreting SQL: " sql)
   (err/wrap-anomaly {:sql sql}
-    (loop [sql (trim-sql sql)]
+    (loop [sql (-> sql trim-sql apply-grafana-rewrites)]
       (if-let [replacement (replace-queries sql)]
         (recur replacement)
 
