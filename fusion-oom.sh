@@ -18,7 +18,7 @@ set -euo pipefail
 
 IMAGE="xtdb-bench:fusion-oom"
 VOLUME="fusion-oom-data"
-MEMORY="7g"
+MEMORY="10g"
 DEVICES=10000
 READINGS=1000
 
@@ -34,7 +34,7 @@ echo "=== Creating volume ==="
 docker volume create "$VOLUME" 2>/dev/null || true
 
 # Check if data has already been loaded by looking for the node dir in the volume
-DATA_EXISTS=$(docker run --rm -v "$VOLUME":/opt/xtdb/bench-data "$IMAGE" bash -c \
+DATA_EXISTS=$(docker run --rm --entrypoint bash -v "$VOLUME":/opt/xtdb/bench-data "$IMAGE" -c \
   'test -d /opt/xtdb/bench-data/node && echo "yes" || echo "no"' 2>/dev/null || echo "no")
 
 if [ "$DATA_EXISTS" = "yes" ]; then
