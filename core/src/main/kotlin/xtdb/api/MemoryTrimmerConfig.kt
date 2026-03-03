@@ -7,7 +7,7 @@ import java.time.Duration
 
 @Serializable
 data class MemoryTrimmerConfig(
-    var enabled: Boolean = true,
+    var enabled: Boolean = false,
     var interval: Duration = Duration.ofSeconds(10),
 ) {
     fun enabled(enabled: Boolean) = apply { this.enabled = enabled }
