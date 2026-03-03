@@ -8,6 +8,8 @@ RUN make generators
 # Runtime image
 FROM eclipse-temurin:21
 
+RUN apt-get update && apt-get install -y --no-install-recommends libjemalloc2 && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /opt/xtdb
 
 # Default JVM options - override by setting JDK_JAVA_OPTIONS at runtime

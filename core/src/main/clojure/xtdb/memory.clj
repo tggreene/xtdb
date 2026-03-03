@@ -4,6 +4,15 @@
             [xtdb.node :as xtn])
   (:import [xtdb.api Xtdb$Config MemoryTrimmerConfig]))
 
+(defn- jemalloc?
+  "Returns true if jemalloc is the active allocator (e.g. via LD_PRELOAD)."
+  []
+  (try
+    (let [^java.lang.foreign.Linker linker (java.lang.foreign.Linker/nativeLinker)
+          ^java.lang.foreign.SymbolLookup lookup (.defaultLookup linker)]
+      (.isPresent (.find lookup "je_malloc_conf")))
+    (catch Throwable _ false)))
+
 (defn- ->malloc-trim-fn
   "Returns a zero-arg fn that calls glibc malloc_trim(0) via FFM, or nil if unavailable."
   []
@@ -43,30 +52,34 @@
       :interval (.getInterval config)}})
 
 (defmethod ig/init-key :xtdb/memory-trimmer [_ {:keys [enabled? ^java.time.Duration interval]}]
-  (when enabled?
-    (if-let [trim-fn (->malloc-trim-fn)]
-      (let [running (atom true)
-            interval-ms (.toMillis interval)
-            t (Thread.
-               (fn []
-                 (log/info "memory-trimmer: started, calling malloc_trim(0) every" interval)
-                 (while @running
-                   (try
-                     (Thread/sleep interval-ms)
-                     (when @running
-                       (trim-fn))
-                     (catch InterruptedException _)
-                     (catch Throwable t
-                       (log/warnf t "memory-trimmer: unexpected error"))))))]
-        (.setDaemon t true)
-        (.setName t "xtdb-memory-trimmer")
-        (.start t)
-        (fn stop-memory-trimmer []
-          (reset! running false)
-          (.interrupt t)))
-      (do
-        (log/info "memory-trimmer: malloc_trim not available, no-op")
-        nil))))
+  (let [using-jemalloc? (jemalloc?)]
+    (when using-jemalloc?
+      (log/info "memory-trimmer: jemalloc detected, memory reclamation handled by jemalloc"))
+    (when enabled?
+      (if-let [trim-fn (when-not using-jemalloc?
+                          (->malloc-trim-fn))]
+        (let [running (atom true)
+              interval-ms (.toMillis interval)
+              t (Thread.
+                 (fn []
+                   (log/info "memory-trimmer: started, calling malloc_trim(0) every" interval)
+                   (while @running
+                     (try
+                       (Thread/sleep interval-ms)
+                       (when @running
+                         (trim-fn))
+                       (catch InterruptedException _)
+                       (catch Throwable t
+                         (log/warnf t "memory-trimmer: unexpected error"))))))]
+          (.setDaemon t true)
+          (.setName t "xtdb-memory-trimmer")
+          (.start t)
+          (fn stop-memory-trimmer []
+            (reset! running false)
+            (.interrupt t)))
+        (when-not using-jemalloc?
+          (log/info "memory-trimmer: malloc_trim not available, no-op")
+          nil)))))
 
 (defmethod ig/halt-key! :xtdb/memory-trimmer [_ stop-fn]
   (when stop-fn
