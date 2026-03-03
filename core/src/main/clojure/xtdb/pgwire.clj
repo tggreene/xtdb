@@ -703,17 +703,32 @@
   "Pattern-based query rewrites for Grafana PostgreSQL plugin.
   Grafana sends complex introspection queries that use PG-specific FROM-clause
   function calls (e.g. string_to_array in FROM) which XTDB's parser doesn't support.
-  We rewrite these to semantically equivalent simpler SQL."
+  We rewrite these to semantically equivalent simpler SQL.
+  Each entry has a :pattern regex and a :rewrite fn that takes the match and returns SQL."
   [;; Grafana table discovery - uses string_to_array/generate_series in FROM to
    ;; dynamically resolve search_path. Since XTDB's search_path is always 'public',
    ;; we can simplify the search_path subquery to a literal IN ('public').
    {:pattern #"(?is)SELECT\s+CASE\s+WHEN\s+quote_ident\(table_schema\)\s+IN\s*\(\s*SELECT.*?string_to_array\(current_setting\('search_path'\).*?FROM\s+information_schema\.tables\b"
-    :replacement "SELECT CASE WHEN quote_ident(table_schema) IN ('public') THEN quote_ident(table_name) ELSE quote_ident(table_schema) || '.' || quote_ident(table_name) END AS \"table\" FROM information_schema.tables WHERE quote_ident(table_schema) NOT IN ('information_schema', 'pg_catalog', '_timescaledb_cache', '_timescaledb_catalog', '_timescaledb_internal', '_timescaledb_config', 'timescaledb_information', 'timescaledb_experimental') ORDER BY 1"}])
+    :rewrite (constantly "SELECT CASE WHEN quote_ident(table_schema) IN ('public') THEN quote_ident(table_name) ELSE quote_ident(table_schema) || '.' || quote_ident(table_name) END AS \"table\" FROM information_schema.tables WHERE quote_ident(table_schema) NOT IN ('information_schema', 'pg_catalog', '_timescaledb_cache', '_timescaledb_catalog', '_timescaledb_internal', '_timescaledb_config', 'timescaledb_information', 'timescaledb_experimental') ORDER BY 1")}
+
+   ;; Grafana column discovery - extracts columns for a selected table.
+   ;; Uses parse_ident to handle schema-qualified names and string_to_array in FROM
+   ;; for search_path resolution. We simplify: unqualified names match on table_name
+   ;; in the 'public' schema; qualified names match schema + table.
+   {:pattern #"(?is)SELECT\s+quote_ident\(column_name\).*?FROM\s+information_schema\.columns\s+WHERE\s+CASE\s+WHEN\s+array_length\(parse_ident\('([^']+)'\).*?string_to_array\(current_setting\('search_path'\)"
+    :rewrite (fn [match]
+               (let [table-ref (second match)
+                     parts (str/split table-ref #"\." 2)]
+                 (if (= 2 (count parts))
+                   (format "SELECT quote_ident(column_name) AS \"column\", data_type AS \"type\" FROM information_schema.columns WHERE quote_ident(table_schema) = '%s' AND quote_ident(table_name) = '%s'"
+                           (first parts) (second parts))
+                   (format "SELECT quote_ident(column_name) AS \"column\", data_type AS \"type\" FROM information_schema.columns WHERE quote_ident(table_schema) = 'public' AND quote_ident(table_name) = '%s'"
+                           table-ref))))}])
 
 (defn- apply-grafana-rewrites [sql]
-  (reduce (fn [s {:keys [pattern replacement]}]
-            (if (re-find pattern s)
-              (reduced replacement)
+  (reduce (fn [s {:keys [pattern rewrite]}]
+            (if-let [match (re-find pattern s)]
+              (reduced (rewrite match))
               s))
           sql grafana-rewrites))
 
