@@ -1,17 +1,23 @@
 (ns xtdb.memory
-  (:require [clojure.tools.logging :as log]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
+            [clojure.tools.logging :as log]
             [integrant.core :as ig]
             [xtdb.node :as xtn])
-  (:import [xtdb.api Xtdb$Config MemoryTrimmerConfig]))
+  (:import [java.lang ProcessHandle]
+           [xtdb.api Xtdb$Config MemoryTrimmerConfig]))
 
-(defn- jemalloc?
-  "Returns true if jemalloc is the active allocator (e.g. via LD_PRELOAD)."
+(defn- jemalloc-loaded?
+  "Checks /proc/<pid>/maps (Linux) for evidence that jemalloc is loaded into the process."
   []
   (try
-    (let [^java.lang.foreign.Linker linker (java.lang.foreign.Linker/nativeLinker)
-          ^java.lang.foreign.SymbolLookup lookup (.defaultLookup linker)]
-      (.isPresent (.find lookup "je_malloc_conf")))
-    (catch Throwable _ false)))
+    (let [pid (.pid (ProcessHandle/current))
+          maps-path (java.nio.file.Path/of (str "/proc/" pid "/maps") (into-array String []))]
+      (when (java.nio.file.Files/exists maps-path (into-array java.nio.file.LinkOption []))
+        (str/includes? (java.nio.file.Files/readString maps-path) "jemalloc")))
+    (catch Throwable t
+      (log/warnf t "jemalloc-loaded? check failed")
+      nil)))
 
 (defn- ->malloc-trim-fn
   "Returns a zero-arg fn that calls glibc malloc_trim(0) via FFM, or nil if unavailable."
@@ -52,11 +58,13 @@
       :interval (.getInterval config)}})
 
 (defmethod ig/init-key :xtdb/memory-trimmer [_ {:keys [enabled? ^java.time.Duration interval]}]
-  (let [using-jemalloc? (jemalloc?)]
-    (when using-jemalloc?
-      (log/info "memory-trimmer: jemalloc detected, memory reclamation handled by jemalloc"))
-    (when enabled?
-      (if-let [trim-fn (when-not using-jemalloc?
+  (log/infof "memory-trimmer: init (enabled=%s, interval=%s)" enabled? interval)
+  (when enabled?
+    (let [jemalloc? (jemalloc-loaded?)]
+      (log/infof "memory-trimmer: jemalloc-loaded? => %s" (boolean jemalloc?))
+      (when jemalloc?
+        (log/info "memory-trimmer: jemalloc loaded, memory reclamation handled by jemalloc"))
+      (if-let [trim-fn (when-not jemalloc?
                           (->malloc-trim-fn))]
         (let [running (atom true)
               interval-ms (.toMillis interval)
@@ -67,7 +75,8 @@
                      (try
                        (Thread/sleep interval-ms)
                        (when @running
-                         (trim-fn))
+                         (let [released? (trim-fn)]
+                           (log/debugf "malloc_trim(0): %s" (if released? "released pages" "nothing to release"))))
                        (catch InterruptedException _)
                        (catch Throwable t
                          (log/warnf t "memory-trimmer: unexpected error"))))))]
@@ -77,7 +86,7 @@
           (fn stop-memory-trimmer []
             (reset! running false)
             (.interrupt t)))
-        (when-not using-jemalloc?
+        (when-not jemalloc?
           (log/info "memory-trimmer: malloc_trim not available, no-op")
           nil)))))
 
