@@ -2196,7 +2196,7 @@
     (reify ListValueReader
       (size [_]
         (Math/max (int 0)
-                  (int (inc (Math/floorDiv (Math/subtractExact end start) step)))))
+                  (int (Math/ceil (/ (Math/subtractExact end start) step)))))
 
       (nth [_ idx]
         (doto box
