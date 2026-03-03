@@ -119,12 +119,190 @@
       "type": "stat"
     },
     {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "DS_PROMETHEUS"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "dashed+area"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 10737418240
+              }
+            ]
+          },
+          "unit": "decbytes"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Container Limit (10GB)"
+            },
+            "properties": [
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none"
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 2
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 4
+      },
+      "id": 46,
+      "options": {
+        "legend": {
+          "calcs": [
+            "last"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "DS_PROMETHEUS"
+          },
+          "editorMode": "code",
+          "expr": "sum by(node_id) (jvm_memory_used_bytes{area=\"heap\", node_id=\"$xtdbnode\"})",
+          "legendFormat": "Heap",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "DS_PROMETHEUS"
+          },
+          "editorMode": "code",
+          "expr": "sum by(node_id) (jvm_memory_used_bytes{area=\"nonheap\", node_id=\"$xtdbnode\"})",
+          "legendFormat": "Non-Heap (Metaspace + CodeCache)",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "DS_PROMETHEUS"
+          },
+          "editorMode": "code",
+          "expr": "jvm_memory_direct_bytes{node_id=\"$xtdbnode\"}",
+          "legendFormat": "Direct (NIO ByteBuffers)",
+          "refId": "E"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "DS_PROMETHEUS"
+          },
+          "editorMode": "code",
+          "expr": "jvm_memory_netty_bytes{node_id=\"$xtdbnode\"}",
+          "legendFormat": "Netty/Arrow (Off-Heap)",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "DS_PROMETHEUS"
+          },
+          "editorMode": "code",
+          "expr": "vector(10737418240)",
+          "legendFormat": "Container Limit (10GB)",
+          "refId": "D"
+        }
+      ],
+      "title": "Total Process Memory (Stacked)",
+      "type": "timeseries"
+    },
+    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 4
+        "y": 13
       },
       "id": 22,
       "panels": [],
@@ -194,7 +372,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 5
+        "y": 14
       },
       "id": 19,
       "options": {
@@ -297,7 +475,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 5
+        "y": 14
       },
       "id": 17,
       "options": {
@@ -359,7 +537,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 13
+        "y": 22
       },
       "id": 16,
       "options": {
@@ -378,7 +556,7 @@
           "color": "rgba(255,0,255,0.7)"
         },
         "filterValues": {
-          "le": 1e-9
+          "le": 1e-09
         },
         "legend": {
           "show": true
@@ -425,7 +603,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 21
+        "y": 30
       },
       "id": 12,
       "panels": [],
@@ -495,7 +673,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 22
+        "y": 31
       },
       "id": 18,
       "options": {
@@ -598,7 +776,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 22
+        "y": 31
       },
       "id": 15,
       "options": {
@@ -660,7 +838,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 30
+        "y": 39
       },
       "id": 14,
       "options": {
@@ -679,7 +857,7 @@
           "color": "rgba(255,0,255,0.7)"
         },
         "filterValues": {
-          "le": 1e-9
+          "le": 1e-09
         },
         "legend": {
           "show": true
@@ -727,7 +905,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 38
+        "y": 47
       },
       "id": 7,
       "panels": [],
@@ -798,7 +976,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 39
+        "y": 48
       },
       "id": 8,
       "options": {
@@ -900,7 +1078,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 39
+        "y": 48
       },
       "id": 20,
       "options": {
@@ -1002,7 +1180,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 47
+        "y": 56
       },
       "id": 9,
       "options": {
@@ -1104,7 +1282,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 47
+        "y": 56
       },
       "id": 10,
       "options": {
@@ -1207,7 +1385,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 55
+        "y": 64
       },
       "id": 11,
       "options": {
@@ -1251,7 +1429,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 64
+        "y": 73
       },
       "id": 2,
       "panels": [],
@@ -1310,7 +1488,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 65
+        "y": 74
       },
       "id": 24,
       "options": {
@@ -1443,7 +1621,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 65
+        "y": 74
       },
       "id": 3,
       "options": {
@@ -1545,7 +1723,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 73
+        "y": 82
       },
       "id": 4,
       "options": {
@@ -1647,7 +1825,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 73
+        "y": 82
       },
       "id": 5,
       "options": {
@@ -1749,7 +1927,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 81
+        "y": 90
       },
       "id": 6,
       "options": {
@@ -1851,7 +2029,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 81
+        "y": 90
       },
       "id": 38,
       "options": {
@@ -1948,7 +2126,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 89
+        "y": 98
       },
       "id": 40,
       "options": {
@@ -1987,7 +2165,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 97
+        "y": 106
       },
       "id": 28,
       "panels": [],
@@ -2057,7 +2235,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 98
+        "y": 107
       },
       "id": 26,
       "options": {
@@ -2174,7 +2352,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 98
+        "y": 107
       },
       "id": 30,
       "options": {
@@ -2290,7 +2468,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 106
+        "y": 115
       },
       "id": 32,
       "options": {
@@ -2438,7 +2616,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 106
+        "y": 115
       },
       "id": 34,
       "options": {
@@ -2594,7 +2772,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 114
+        "y": 123
       },
       "id": 36,
       "options": {
@@ -2645,7 +2823,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 122
+        "y": 131
       },
       "id": 41,
       "panels": [],
@@ -2716,7 +2894,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 123
+        "y": 132
       },
       "id": 42,
       "options": {
@@ -2818,7 +2996,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 123
+        "y": 132
       },
       "id": 45,
       "options": {
