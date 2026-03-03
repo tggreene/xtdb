@@ -483,20 +483,24 @@
         (Long/parseLong (str/trim (slurp f)))))
     (catch Exception _ nil)))
 
-(defn- mem-snapshot []
-  (let [runtime (Runtime/getRuntime)
-        heap-used (- (.totalMemory runtime) (.freeMemory runtime))
-        netty (util/used-netty-memory)
-        direct (when-let [pool (some-> (java.lang.management.ManagementFactory/getPlatformMXBeans
-                                        java.lang.management.BufferPoolMXBean)
-                                       (->> (filter #(= (.getName %) "direct")))
-                                       first)]
-                 (.getMemoryUsed pool))
-        cgroup (cgroup-memory-bytes)]
-    {:heap-mb (quot heap-used 1048576)
-     :netty-mb (quot netty 1048576)
-     :direct-mb (when direct (quot direct 1048576))
-     :cgroup-mb (when cgroup (quot cgroup 1048576))}))
+(defn- mem-snapshot
+  ([] (mem-snapshot nil))
+  ([node]
+   (let [runtime (Runtime/getRuntime)
+         heap-used (- (.totalMemory runtime) (.freeMemory runtime))
+         netty (util/used-netty-memory)
+         direct (when-let [pool (some-> (java.lang.management.ManagementFactory/getPlatformMXBeans
+                                         java.lang.management.BufferPoolMXBean)
+                                        (->> (filter #(= (.getName %) "direct")))
+                                        first)]
+                  (.getMemoryUsed pool))
+         cgroup (cgroup-memory-bytes)
+         root-alloc (when node (.getAllocatedMemory ^org.apache.arrow.memory.BufferAllocator (.allocator node)))]
+     {:heap-mb (quot heap-used 1048576)
+      :netty-mb (quot netty 1048576)
+      :direct-mb (when direct (quot direct 1048576))
+      :cgroup-mb (when cgroup (quot cgroup 1048576))
+      :root-alloc-mb (when root-alloc (quot root-alloc 1048576))})))
 
 (defn- cgroup-stat []
   (try
@@ -511,16 +515,16 @@
 
 (defn start-memory-monitor!
   "Background daemon that logs memory every second. Returns a fn to stop it."
-  []
+  [node]
   (let [running (atom true)
         t (Thread.
            (fn []
              (while @running
                (try
-                 (let [{:keys [heap-mb netty-mb direct-mb cgroup-mb]} (mem-snapshot)
-                       {:keys [current swap max]} (cgroup-stat)]
-                   (log/infof "mem-monitor: heap=%dMB netty=%dMB direct=%sMB cgroup=%sMB swap=%sMB max=%sMB"
-                              heap-mb netty-mb direct-mb cgroup-mb
+                 (let [{:keys [heap-mb netty-mb direct-mb cgroup-mb root-alloc-mb]} (mem-snapshot node)
+                       {:keys [swap max]} (cgroup-stat)]
+                   (log/infof "mem-monitor: heap=%dMB netty=%dMB direct=%sMB arrow=%sMB cgroup=%sMB swap=%sMB max=%sMB"
+                              heap-mb netty-mb direct-mb root-alloc-mb cgroup-mb
                               (when swap (quot swap 1048576))
                               (when max (quot max 1048576))))
                  (catch Exception _))
@@ -532,16 +536,16 @@
 
 (defn wrap-with-logging [op-name f]
   (let [f (b/wrap-in-catch f)]
-    (fn [ctx]
-      (let [{:keys [heap-mb netty-mb direct-mb cgroup-mb]} (mem-snapshot)]
-        (log/infof "oltp-op: %s starting heap=%dMB netty=%dMB direct=%sMB cgroup=%sMB"
-                   op-name heap-mb netty-mb direct-mb cgroup-mb)
+    (fn [{:keys [node] :as ctx}]
+      (let [{:keys [heap-mb netty-mb direct-mb cgroup-mb root-alloc-mb]} (mem-snapshot node)]
+        (log/infof "oltp-op: %s starting heap=%dMB netty=%dMB arrow=%sMB cgroup=%sMB"
+                   op-name heap-mb netty-mb root-alloc-mb cgroup-mb)
         (let [start (System/nanoTime)
               result (f ctx)
               elapsed-ms (quot (- (System/nanoTime) start) 1000000)
-              after (mem-snapshot)]
-          (log/infof "oltp-op: %s succeeded (%dms) heap=%dMB netty=%dMB direct=%sMB cgroup=%sMB"
-                     op-name elapsed-ms (:heap-mb after) (:netty-mb after) (:direct-mb after) (:cgroup-mb after))
+              after (mem-snapshot node)]
+          (log/infof "oltp-op: %s succeeded (%dms) heap=%dMB netty=%dMB arrow=%sMB cgroup=%sMB"
+                     op-name elapsed-ms (:heap-mb after) (:netty-mb after) (:root-alloc-mb after) (:cgroup-mb after))
           result)))))
 
 (def all-oltp-choices
@@ -629,7 +633,7 @@
                           min-vt (-> (xt/q node "SELECT min(_valid_from) AS m FROM readings FOR ALL VALID_TIME")
                                      first :m)]
                       (log/infof "Valid time range: %s to %s" min-vt max-vt)
-                      (start-memory-monitor!)
+                      (start-memory-monitor! node)
                       (swap! !state into {:latest-completed-tx latest-completed-tx
                                           :max-valid-time max-vt
                                           :min-valid-time min-vt})))}]
