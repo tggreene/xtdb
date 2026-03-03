@@ -8,7 +8,7 @@ set -euo pipefail
 # monotonic anon growth until OOM kill.
 #
 # This script runs the fusion benchmark in two phases:
-#   1. Load phase: ingest data into a volume-mounted node dir
+#   1. Load phase: ingest data into a volume-mounted node dir (skipped if already loaded)
 #   2. Query stress phase: repeatedly run queries that trigger the OOM
 #
 # To test fixes, add env vars to the query phase:
@@ -33,18 +33,27 @@ docker build -t "$IMAGE" -f modules/bench/Dockerfile .
 echo "=== Creating volume ==="
 docker volume create "$VOLUME" 2>/dev/null || true
 
-echo "=== Phase 1: Load (ingest data) ==="
-docker run --rm \
-  --name fusion-oom-load \
-  -v "$VOLUME":/opt/xtdb/bench-data \
-  --memory="$MEMORY" \
-  --memory-swap="$MEMORY" \
-  -e JDK_JAVA_OPTIONS="$JDK_OPTS" \
-  "$IMAGE" fusion \
-  --devices "$DEVICES" \
-  --readings "$READINGS" \
-  --node-dir /opt/xtdb/bench-data/node \
-  --staged-only
+# Check if data has already been loaded by looking for the node dir in the volume
+DATA_EXISTS=$(docker run --rm -v "$VOLUME":/opt/xtdb/bench-data "$IMAGE" bash -c \
+  'test -d /opt/xtdb/bench-data/node && echo "yes" || echo "no"' 2>/dev/null || echo "no")
+
+if [ "$DATA_EXISTS" = "yes" ]; then
+  echo "=== Phase 1: SKIPPED (data already loaded in volume '$VOLUME') ==="
+  echo "    To force reload: docker volume rm $VOLUME"
+else
+  echo "=== Phase 1: Load (ingest data + short OLTP to sync/compact) ==="
+  docker run --rm \
+    --name fusion-oom-load \
+    -v "$VOLUME":/opt/xtdb/bench-data \
+    --memory="$MEMORY" \
+    --memory-swap="$MEMORY" \
+    -e JDK_JAVA_OPTIONS="$JDK_OPTS" \
+    "$IMAGE" fusion \
+    --devices "$DEVICES" \
+    --readings "$READINGS" \
+    --node-dir /opt/xtdb/bench-data/node \
+    -d PT1S
+fi
 
 echo "=== Phase 2: Query stress (watch anon grow until OOM) ==="
 echo "    Memory limit: $MEMORY"
