@@ -498,6 +498,24 @@
      :direct-mb (when direct (quot direct 1048576))
      :cgroup-mb (when cgroup (quot cgroup 1048576))}))
 
+(defn start-memory-monitor!
+  "Background daemon that logs memory every second. Returns a fn to stop it."
+  []
+  (let [running (atom true)
+        t (Thread.
+           (fn []
+             (while @running
+               (try
+                 (let [{:keys [heap-mb netty-mb direct-mb cgroup-mb]} (mem-snapshot)]
+                   (log/infof "mem-monitor: heap=%dMB netty=%dMB direct=%sMB cgroup=%sMB"
+                              heap-mb netty-mb direct-mb cgroup-mb))
+                 (catch Exception _))
+               (Thread/sleep 1000))))]
+    (.setDaemon t true)
+    (.setName t "mem-monitor")
+    (.start t)
+    #(reset! running false)))
+
 (defn wrap-with-logging [op-name f]
   (let [f (b/wrap-in-catch f)]
     (fn [ctx]
@@ -597,6 +615,7 @@
                           min-vt (-> (xt/q node "SELECT min(_valid_from) AS m FROM readings FOR ALL VALID_TIME")
                                      first :m)]
                       (log/infof "Valid time range: %s to %s" min-vt max-vt)
+                      (start-memory-monitor!)
                       (swap! !state into {:latest-completed-tx latest-completed-tx
                                           :max-valid-time max-vt
                                           :min-valid-time min-vt})))}]
