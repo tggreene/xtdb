@@ -497,6 +497,16 @@
              (into {}))))
     (catch Exception _ nil)))
 
+(defn- netty-pooled-bytes
+  "Bytes held by Netty's PooledByteBufAllocator (arenas + caches)."
+  []
+  (try
+    (let [metric (.metric (io.netty.buffer.PooledByteBufAllocator/DEFAULT))]
+      {:pooled-direct (.usedDirectMemory metric)
+       :pooled-heap (.usedHeapMemory metric)
+       :num-arenas (count (.directArenas metric))})
+    (catch Exception _ nil)))
+
 (defn- mem-snapshot
   ([] (mem-snapshot nil))
   ([node]
@@ -505,25 +515,30 @@
          netty (util/used-netty-memory)
          cgroup (cgroup-memory-bytes)
          cg-stat (cgroup-memory-stat)
-         root-alloc (when node (.getAllocatedMemory ^org.apache.arrow.memory.BufferAllocator (.allocator node)))]
+         root-alloc (when node (.getAllocatedMemory ^org.apache.arrow.memory.BufferAllocator (.allocator node)))
+         pooled (netty-pooled-bytes)]
      {:heap-mb (quot heap-used 1048576)
       :netty-mb (quot netty 1048576)
       :cgroup-mb (when cgroup (quot cgroup 1048576))
       :mmap-mb (when-let [fm (:file_mapped cg-stat)] (quot fm 1048576))
       :anon-mb (when-let [a (:anon cg-stat)] (quot a 1048576))
-      :arrow-mb (when root-alloc (quot root-alloc 1048576))})))
+      :arrow-mb (when root-alloc (quot root-alloc 1048576))
+      :pooled-mb (when pooled (quot (:pooled-direct pooled) 1048576))
+      :num-arenas (when pooled (:num-arenas pooled))})))
 
 (defn start-memory-monitor!
   "Background daemon that logs memory every second. Returns a fn to stop it."
   [node]
+  (let [{:keys [num-arenas]} (mem-snapshot node)]
+    (log/infof "mem-monitor: netty pooled allocator has %s direct arenas" num-arenas))
   (let [running (atom true)
         t (Thread.
            (fn []
              (while @running
                (try
-                 (let [{:keys [heap-mb netty-mb cgroup-mb mmap-mb anon-mb arrow-mb]} (mem-snapshot node)]
-                   (log/infof "mem-monitor: heap=%dMB netty=%dMB arrow=%sMB mmap=%sMB anon=%sMB cgroup=%sMB"
-                              heap-mb netty-mb arrow-mb mmap-mb anon-mb cgroup-mb))
+                 (let [{:keys [heap-mb netty-mb cgroup-mb mmap-mb anon-mb arrow-mb pooled-mb]} (mem-snapshot node)]
+                   (log/infof "mem-monitor: heap=%dMB netty=%dMB arrow=%sMB pooled=%sMB anon=%sMB cgroup=%sMB"
+                              heap-mb netty-mb arrow-mb pooled-mb anon-mb cgroup-mb))
                  (catch Exception _))
                (Thread/sleep 1000))))]
     (.setDaemon t true)
@@ -534,15 +549,15 @@
 (defn wrap-with-logging [op-name f]
   (let [f (b/wrap-in-catch f)]
     (fn [{:keys [node] :as ctx}]
-      (let [{:keys [heap-mb netty-mb cgroup-mb mmap-mb arrow-mb]} (mem-snapshot node)]
-        (log/infof "oltp-op: %s starting heap=%dMB netty=%dMB arrow=%sMB mmap=%sMB cgroup=%sMB"
-                   op-name heap-mb netty-mb arrow-mb mmap-mb cgroup-mb)
+      (let [{:keys [heap-mb netty-mb cgroup-mb arrow-mb pooled-mb]} (mem-snapshot node)]
+        (log/infof "oltp-op: %s starting heap=%dMB netty=%dMB arrow=%sMB pooled=%sMB cgroup=%sMB"
+                   op-name heap-mb netty-mb arrow-mb pooled-mb cgroup-mb)
         (let [start (System/nanoTime)
               result (f ctx)
               elapsed-ms (quot (- (System/nanoTime) start) 1000000)
               after (mem-snapshot node)]
-          (log/infof "oltp-op: %s succeeded (%dms) heap=%dMB netty=%dMB arrow=%sMB mmap=%sMB cgroup=%sMB"
-                     op-name elapsed-ms (:heap-mb after) (:netty-mb after) (:arrow-mb after) (:mmap-mb after) (:cgroup-mb after))
+          (log/infof "oltp-op: %s succeeded (%dms) heap=%dMB netty=%dMB arrow=%sMB pooled=%sMB cgroup=%sMB"
+                     op-name elapsed-ms (:heap-mb after) (:netty-mb after) (:arrow-mb after) (:pooled-mb after) (:cgroup-mb after))
           result)))))
 
 (def all-oltp-choices
