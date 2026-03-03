@@ -483,35 +483,35 @@
         (Long/parseLong (str/trim (slurp f)))))
     (catch Exception _ nil)))
 
+(defn- cgroup-memory-stat
+  "Parses /sys/fs/cgroup/memory.stat into a keyword map."
+  []
+  (try
+    (let [f (java.io.File. "/sys/fs/cgroup/memory.stat")]
+      (when (.exists f)
+        (->> (str/split-lines (slurp f))
+             (keep (fn [line]
+                     (let [[k v] (str/split line #"\s+" 2)]
+                       (when (and k v)
+                         [(keyword k) (Long/parseLong v)]))))
+             (into {}))))
+    (catch Exception _ nil)))
+
 (defn- mem-snapshot
   ([] (mem-snapshot nil))
   ([node]
    (let [runtime (Runtime/getRuntime)
          heap-used (- (.totalMemory runtime) (.freeMemory runtime))
          netty (util/used-netty-memory)
-         direct (when-let [pool (some-> (java.lang.management.ManagementFactory/getPlatformMXBeans
-                                         java.lang.management.BufferPoolMXBean)
-                                        (->> (filter #(= (.getName %) "direct")))
-                                        first)]
-                  (.getMemoryUsed pool))
          cgroup (cgroup-memory-bytes)
+         cg-stat (cgroup-memory-stat)
          root-alloc (when node (.getAllocatedMemory ^org.apache.arrow.memory.BufferAllocator (.allocator node)))]
      {:heap-mb (quot heap-used 1048576)
       :netty-mb (quot netty 1048576)
-      :direct-mb (when direct (quot direct 1048576))
       :cgroup-mb (when cgroup (quot cgroup 1048576))
-      :root-alloc-mb (when root-alloc (quot root-alloc 1048576))})))
-
-(defn- cgroup-stat []
-  (try
-    (let [read-long (fn [path]
-                      (let [f (java.io.File. path)]
-                        (when (.exists f)
-                          (Long/parseLong (str/trim (slurp f))))))]
-      {:current (read-long "/sys/fs/cgroup/memory.current")
-       :swap (read-long "/sys/fs/cgroup/memory.swap.current")
-       :max (read-long "/sys/fs/cgroup/memory.max")})
-    (catch Exception _ nil)))
+      :mmap-mb (when-let [fm (:file_mapped cg-stat)] (quot fm 1048576))
+      :anon-mb (when-let [a (:anon cg-stat)] (quot a 1048576))
+      :arrow-mb (when root-alloc (quot root-alloc 1048576))})))
 
 (defn start-memory-monitor!
   "Background daemon that logs memory every second. Returns a fn to stop it."
@@ -521,12 +521,9 @@
            (fn []
              (while @running
                (try
-                 (let [{:keys [heap-mb netty-mb direct-mb cgroup-mb root-alloc-mb]} (mem-snapshot node)
-                       {:keys [swap max]} (cgroup-stat)]
-                   (log/infof "mem-monitor: heap=%dMB netty=%dMB direct=%sMB arrow=%sMB cgroup=%sMB swap=%sMB max=%sMB"
-                              heap-mb netty-mb direct-mb root-alloc-mb cgroup-mb
-                              (when swap (quot swap 1048576))
-                              (when max (quot max 1048576))))
+                 (let [{:keys [heap-mb netty-mb cgroup-mb mmap-mb anon-mb arrow-mb]} (mem-snapshot node)]
+                   (log/infof "mem-monitor: heap=%dMB netty=%dMB arrow=%sMB mmap=%sMB anon=%sMB cgroup=%sMB"
+                              heap-mb netty-mb arrow-mb mmap-mb anon-mb cgroup-mb))
                  (catch Exception _))
                (Thread/sleep 1000))))]
     (.setDaemon t true)
@@ -537,15 +534,15 @@
 (defn wrap-with-logging [op-name f]
   (let [f (b/wrap-in-catch f)]
     (fn [{:keys [node] :as ctx}]
-      (let [{:keys [heap-mb netty-mb direct-mb cgroup-mb root-alloc-mb]} (mem-snapshot node)]
-        (log/infof "oltp-op: %s starting heap=%dMB netty=%dMB arrow=%sMB cgroup=%sMB"
-                   op-name heap-mb netty-mb root-alloc-mb cgroup-mb)
+      (let [{:keys [heap-mb netty-mb cgroup-mb mmap-mb arrow-mb]} (mem-snapshot node)]
+        (log/infof "oltp-op: %s starting heap=%dMB netty=%dMB arrow=%sMB mmap=%sMB cgroup=%sMB"
+                   op-name heap-mb netty-mb arrow-mb mmap-mb cgroup-mb)
         (let [start (System/nanoTime)
               result (f ctx)
               elapsed-ms (quot (- (System/nanoTime) start) 1000000)
               after (mem-snapshot node)]
-          (log/infof "oltp-op: %s succeeded (%dms) heap=%dMB netty=%dMB arrow=%sMB cgroup=%sMB"
-                     op-name elapsed-ms (:heap-mb after) (:netty-mb after) (:root-alloc-mb after) (:cgroup-mb after))
+          (log/infof "oltp-op: %s succeeded (%dms) heap=%dMB netty=%dMB arrow=%sMB mmap=%sMB cgroup=%sMB"
+                     op-name elapsed-ms (:heap-mb after) (:netty-mb after) (:arrow-mb after) (:mmap-mb after) (:cgroup-mb after))
           result)))))
 
 (def all-oltp-choices
