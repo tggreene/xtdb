@@ -74,8 +74,21 @@
       (t/is (some #(= "foo" (:table %)) results)))))
 
 (t/deftest grafana-query-rewrite-test
-  (t/testing "Grafana's real table discovery query is rewritten by pgwire"
+  (t/testing "table discovery query is rewritten"
     (let [grafana-query "SELECT\n  CASE WHEN quote_ident(table_schema) IN (\n    SELECT\n      CASE WHEN trim(s[i]) = '\"$user\"' THEN CURRENT_USER ELSE trim(s[i]) END\n    FROM\n      generate_series(\n        array_lower(string_to_array(current_setting('search_path'), ','), 1),\n        array_upper(string_to_array(current_setting('search_path'), ','), 1)\n      ) AS i,\n      string_to_array(current_setting('search_path'), ',') s\n  )\n  THEN quote_ident(table_name)\n  ELSE quote_ident(table_schema) || '.' || quote_ident(table_name)\n  END AS \"table\"\nFROM information_schema.tables\nWHERE quote_ident(table_schema) NOT IN (\n  'information_schema', 'pg_catalog',\n  '_timescaledb_cache', '_timescaledb_catalog',\n  '_timescaledb_internal', '_timescaledb_config',\n  'timescaledb_information', 'timescaledb_experimental'\n)\nORDER BY 1"
           rewritten (#'xtdb.pgwire/apply-grafana-rewrites grafana-query)]
       (t/is (not= grafana-query rewritten) "query should be rewritten")
-      (t/is (re-find #"IN \('public'\)" rewritten) "should contain simplified search_path"))))
+      (t/is (re-find #"IN \('public'\)" rewritten) "should contain simplified search_path")))
+
+  (t/testing "column discovery query is rewritten with table name"
+    (let [grafana-query "SELECT quote_ident(column_name) AS \"column\", data_type AS \"type\"\n    FROM information_schema.columns\n    WHERE\n      CASE WHEN array_length(parse_ident('sensor_readings'),1) = 2\n        THEN quote_ident(table_schema) = (parse_ident('sensor_readings'))[1]\n          AND quote_ident(table_name) = (parse_ident('sensor_readings'))[2]\n        ELSE quote_ident(table_name) = 'sensor_readings'\n          AND \n          quote_ident(table_schema) IN (\n          SELECT\n            CASE WHEN trim(s[i]) = '\"$user\"' THEN user ELSE trim(s[i]) END\n          FROM\n            generate_series(\n              array_lower(string_to_array(current_setting('search_path'),','),1),\n              array_upper(string_to_array(current_setting('search_path'),','),1)\n            ) as i,\n            string_to_array(current_setting('search_path'),',') s\n          )\n      END"
+          rewritten (#'xtdb.pgwire/apply-grafana-rewrites grafana-query)]
+      (t/is (not= grafana-query rewritten) "query should be rewritten")
+      (t/is (re-find #"table_name\) = 'sensor_readings'" rewritten) "should contain table name")
+      (t/is (re-find #"table_schema\) = 'public'" rewritten) "should default to public schema")))
+
+  (t/testing "column discovery query handles schema-qualified names"
+    (let [grafana-query "SELECT quote_ident(column_name) AS \"column\", data_type AS \"type\"\n    FROM information_schema.columns\n    WHERE\n      CASE WHEN array_length(parse_ident('myschema.mytable'),1) = 2\n        THEN quote_ident(table_schema) = (parse_ident('myschema.mytable'))[1]\n          AND quote_ident(table_name) = (parse_ident('myschema.mytable'))[2]\n        ELSE quote_ident(table_name) = 'myschema.mytable'\n          AND \n          quote_ident(table_schema) IN (\n          SELECT\n            CASE WHEN trim(s[i]) = '\"$user\"' THEN user ELSE trim(s[i]) END\n          FROM\n            generate_series(\n              array_lower(string_to_array(current_setting('search_path'),','),1),\n              array_upper(string_to_array(current_setting('search_path'),','),1)\n            ) as i,\n            string_to_array(current_setting('search_path'),',') s\n          )\n      END"
+          rewritten (#'xtdb.pgwire/apply-grafana-rewrites grafana-query)]
+      (t/is (re-find #"table_schema\) = 'myschema'" rewritten) "should extract schema")
+      (t/is (re-find #"table_name\) = 'mytable'" rewritten) "should extract table name"))))
