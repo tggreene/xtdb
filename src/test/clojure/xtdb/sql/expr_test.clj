@@ -1610,6 +1610,85 @@ SELECT DATE_BIN(INTERVAL 'P1D', TIMESTAMP '2020-01-01T00:00:00Z'),
   (t/testing "bare USER fallback in UNION with column resolution"
     (t/is (= #{{:user "alice"} {:user "xtdb"}}
              (set (xt/q tu/*node* "SELECT user FROM docs UNION ALL SELECT user AS user FROM foo"))))))
+
+(t/deftest test-quote-ident
+  (t/is (= [{:x "foo"}]
+           (xt/q tu/*node* "SELECT quote_ident('foo') AS x"))
+        "simple lowercase identifier returned unquoted")
+
+  (t/is (= [{:x "foo_bar"}]
+           (xt/q tu/*node* "SELECT quote_ident('foo_bar') AS x"))
+        "underscored identifier returned unquoted")
+
+  (t/is (= [{:x "\"select\""}]
+           (xt/q tu/*node* "SELECT quote_ident('select') AS x"))
+        "reserved word is quoted")
+
+  (t/is (= [{:x "\"Foo\""}]
+           (xt/q tu/*node* "SELECT quote_ident('Foo') AS x"))
+        "mixed-case identifier is quoted")
+
+  (t/is (= [{:x "\"foo bar\""}]
+           (xt/q tu/*node* "SELECT quote_ident('foo bar') AS x"))
+        "identifier with space is quoted")
+
+  (t/is (= [{:x "\"foo\"\"bar\""}]
+           (xt/q tu/*node* "SELECT quote_ident('foo\"bar') AS x"))
+        "identifier with double-quote is escaped and quoted")
+
+  (t/is (= [{:x "\"\""}]
+           (xt/q tu/*node* "SELECT quote_ident('') AS x"))
+        "empty string is quoted")
+
+  (t/is (= [{:x "\"123\""}]
+           (xt/q tu/*node* "SELECT quote_ident('123') AS x"))
+        "leading digit requires quoting"))
+
+(t/deftest test-parse-ident
+  (t/is (= [{:x ["public" "foo"]}]
+           (xt/q tu/*node* "SELECT parse_ident('public.foo') AS x"))
+        "splits a qualified identifier and folds to lowercase")
+
+  (t/is (= [{:x ["foo"]}]
+           (xt/q tu/*node* "SELECT parse_ident('FOO') AS x"))
+        "unquoted identifier is folded to lowercase")
+
+  (t/is (= [{:x ["Foo" "Bar"]}]
+           (xt/q tu/*node* "SELECT parse_ident('\"Foo\".\"Bar\"') AS x"))
+        "quoted identifiers preserve case")
+
+  (t/is (= [{:x ["foo\"bar"]}]
+           (xt/q tu/*node* "SELECT parse_ident('\"foo\"\"bar\"') AS x"))
+        "doubled quotes inside quoted identifier are unescaped")
+
+  (t/is (= [{:x ["public" "My Table"]}]
+           (xt/q tu/*node* "SELECT parse_ident('public.\"My Table\"') AS x"))
+        "mixed quoted and unquoted parts"))
+
+(t/deftest test-string-to-array
+  (t/is (= [{:x ["a" " b" " c"]}]
+           (xt/q tu/*node* "SELECT string_to_array('a, b, c', ',') AS x"))
+        "splits by delimiter"))
+
+(t/deftest test-array-lower
+  (t/is (= [{:x 1}]
+           (xt/q tu/*node* "SELECT array_lower(string_to_array('a,b', ','), 1) AS x"))
+        "returns 1 for dimension 1"))
+
+(t/deftest test-array-length
+  (t/is (= [{:x 2}]
+           (xt/q tu/*node* "SELECT array_length(string_to_array('a,b', ','), 1) AS x"))
+        "returns the length of a list"))
+
+(t/deftest test-array-upper
+  (t/is (= [{:x 2}]
+           (xt/q tu/*node* "SELECT array_upper(string_to_array('a,b', ','), 1) AS x"))
+        "returns the upper bound"))
+
+(t/deftest test-current-setting
+  (t/is (= [{:sp "\"$user\", public"}]
+           (xt/q tu/*node* "SELECT current_setting('search_path') AS sp"))
+        "current_setting('search_path') returns PG-compatible search_path"))
 ;; TODO: Add this?
 #_(t/deftest test-random-fn
     (t/is (= true (-> (xt/q tu/*node* "SELECT 0.0 <= random() AS greater") first :greater)))
