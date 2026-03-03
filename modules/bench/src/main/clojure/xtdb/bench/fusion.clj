@@ -479,12 +479,17 @@
 (defn wrap-with-logging [op-name f]
   (let [f (b/wrap-in-catch f)]
     (fn [ctx]
-      (log/infof "oltp-op: %s starting" op-name)
-      (let [start (System/nanoTime)
-            result (f ctx)
-            elapsed-ms (quot (- (System/nanoTime) start) 1000000)]
-        (log/infof "oltp-op: %s succeeded (%dms)" op-name elapsed-ms)
-        result))))
+      (let [mem-before (util/used-netty-memory)]
+        (log/infof "oltp-op: %s starting netty=%dMB" op-name (quot mem-before 1048576))
+        (let [start (System/nanoTime)
+              result (f ctx)
+              elapsed-ms (quot (- (System/nanoTime) start) 1000000)
+              mem-after (util/used-netty-memory)]
+          (log/infof "oltp-op: %s succeeded (%dms) netty=%dMB (delta=%+dMB)"
+                     op-name elapsed-ms
+                     (quot mem-after 1048576)
+                     (quot (- mem-after mem-before) 1048576))
+          result)))))
 
 (def all-oltp-choices
   {"insert-readings"       [20.0 {:t :call, :transaction :insert-readings, :f (wrap-with-logging "insert-readings" proc-insert-readings)}]
