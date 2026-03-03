@@ -476,6 +476,13 @@
     (when (and min-valid-time max-valid-time)
       (exec-cumulative-registration node min-valid-time max-valid-time {}))))
 
+(defn- cgroup-memory-bytes []
+  (try
+    (let [f (java.io.File. "/sys/fs/cgroup/memory.current")]
+      (when (.exists f)
+        (Long/parseLong (str/trim (slurp f)))))
+    (catch Exception _ nil)))
+
 (defn- mem-snapshot []
   (let [runtime (Runtime/getRuntime)
         heap-used (- (.totalMemory runtime) (.freeMemory runtime))
@@ -484,23 +491,25 @@
                                         java.lang.management.BufferPoolMXBean)
                                        (->> (filter #(= (.getName %) "direct")))
                                        first)]
-                 (.getMemoryUsed pool))]
+                 (.getMemoryUsed pool))
+        cgroup (cgroup-memory-bytes)]
     {:heap-mb (quot heap-used 1048576)
      :netty-mb (quot netty 1048576)
-     :direct-mb (when direct (quot direct 1048576))}))
+     :direct-mb (when direct (quot direct 1048576))
+     :cgroup-mb (when cgroup (quot cgroup 1048576))}))
 
 (defn wrap-with-logging [op-name f]
   (let [f (b/wrap-in-catch f)]
     (fn [ctx]
-      (let [{:keys [heap-mb netty-mb direct-mb]} (mem-snapshot)]
-        (log/infof "oltp-op: %s starting heap=%dMB netty=%dMB direct=%sMB"
-                   op-name heap-mb netty-mb direct-mb)
+      (let [{:keys [heap-mb netty-mb direct-mb cgroup-mb]} (mem-snapshot)]
+        (log/infof "oltp-op: %s starting heap=%dMB netty=%dMB direct=%sMB cgroup=%sMB"
+                   op-name heap-mb netty-mb direct-mb cgroup-mb)
         (let [start (System/nanoTime)
               result (f ctx)
               elapsed-ms (quot (- (System/nanoTime) start) 1000000)
               after (mem-snapshot)]
-          (log/infof "oltp-op: %s succeeded (%dms) heap=%dMB netty=%dMB direct=%sMB"
-                     op-name elapsed-ms (:heap-mb after) (:netty-mb after) (:direct-mb after))
+          (log/infof "oltp-op: %s succeeded (%dms) heap=%dMB netty=%dMB direct=%sMB cgroup=%sMB"
+                     op-name elapsed-ms (:heap-mb after) (:netty-mb after) (:direct-mb after) (:cgroup-mb after))
           result)))))
 
 (def all-oltp-choices
