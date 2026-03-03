@@ -699,38 +699,64 @@
    "SELECT n.oid,n.*,d.description FROM pg_catalog.pg_namespace n LEFT OUTER JOIN pg_catalog.pg_description d ON d.objoid=n.oid AND d.objsubid=0 AND d.classoid='pg_namespace'::regclass ORDER BY nspname"
    "SELECT n.oid,n.nspname,n.nspowner,n.nspacl,d.description FROM pg_catalog.pg_namespace n LEFT OUTER JOIN pg_catalog.pg_description d ON d.objoid=n.oid AND d.objsubid=0 AND d.classoid='pg_namespace'::regclass ORDER BY nspname"})
 
-(def ^:private grafana-rewrites
-  "Pattern-based query rewrites for Grafana PostgreSQL plugin.
-  Grafana sends complex introspection queries that use PG-specific FROM-clause
-  function calls (e.g. string_to_array in FROM) which XTDB's parser doesn't support.
-  We rewrite these to semantically equivalent simpler SQL.
-  Each entry has a :pattern regex and a :rewrite fn that takes the match and returns SQL."
-  [;; Grafana table discovery - uses string_to_array/generate_series in FROM to
-   ;; dynamically resolve search_path. Since XTDB's search_path is always 'public',
-   ;; we can simplify the search_path subquery to a literal IN ('public').
-   {:pattern #"(?is)SELECT\s+CASE\s+WHEN\s+quote_ident\(table_schema\)\s+IN\s*\(\s*SELECT.*?string_to_array\(current_setting\('search_path'\).*?FROM\s+information_schema\.tables\b"
-    :rewrite (constantly "SELECT CASE WHEN quote_ident(table_schema) IN ('public') THEN quote_ident(table_name) ELSE quote_ident(table_schema) || '.' || quote_ident(table_name) END AS \"table\" FROM information_schema.tables WHERE quote_ident(table_schema) NOT IN ('information_schema', 'pg_catalog', '_timescaledb_cache', '_timescaledb_catalog', '_timescaledb_internal', '_timescaledb_config', 'timescaledb_information', 'timescaledb_experimental') ORDER BY 1")}
+(defn- normalize-whitespace
+  "Collapse all runs of whitespace to a single space. Used for query matching
+  so that identical queries with different formatting are recognized."
+  [s]
+  (str/replace s #"\s+" " "))
 
-   ;; Grafana column discovery - extracts columns for a selected table.
-   ;; Uses parse_ident to handle schema-qualified names and string_to_array in FROM
-   ;; for search_path resolution. We simplify: unqualified names match on table_name
-   ;; in the 'public' schema; qualified names match schema + table.
-   {:pattern #"(?is)SELECT\s+quote_ident\(column_name\).*?FROM\s+information_schema\.columns\s+WHERE\s+CASE\s+WHEN\s+array_length\(parse_ident\('([^']+)'\).*?string_to_array\(current_setting\('search_path'\)"
-    :rewrite (fn [match]
-               (let [table-ref (second match)
-                     parts (str/split table-ref #"\." 2)]
-                 (if (= 2 (count parts))
-                   (format "SELECT quote_ident(column_name) AS \"column\", data_type AS \"type\" FROM information_schema.columns WHERE quote_ident(table_schema) = '%s' AND quote_ident(table_name) = '%s'"
-                           (first parts) (second parts))
-                   (format "SELECT quote_ident(column_name) AS \"column\", data_type AS \"type\" FROM information_schema.columns WHERE quote_ident(table_schema) = 'public' AND quote_ident(table_name) = '%s'"
-                           table-ref))))}])
+;; Grafana PostgreSQL plugin query rewrites.
+;; Grafana sends introspection queries that use PG-specific FROM-clause function
+;; calls (string_to_array, generate_series) which XTDB's parser doesn't support.
+;; We match these exactly (after whitespace normalization) and replace them with
+;; semantically equivalent simpler SQL.
+
+(def ^:private grafana-table-discovery-query
+  "The exact table discovery query sent by Grafana's PostgreSQL plugin (whitespace-normalized).
+  Uses bare `user` (not CURRENT_USER) and has a CASE-based ORDER BY that sorts schema-path
+  matches first."
+  (normalize-whitespace
+   "SELECT CASE WHEN quote_ident(table_schema) IN ( SELECT CASE WHEN trim(s[i]) = '\"$user\"' THEN user ELSE trim(s[i]) END FROM generate_series( array_lower(string_to_array(current_setting('search_path'),','),1), array_upper(string_to_array(current_setting('search_path'),','),1) ) as i, string_to_array(current_setting('search_path'),',') s ) THEN quote_ident(table_name) ELSE quote_ident(table_schema) || '.' || quote_ident(table_name) END AS \"table\" FROM information_schema.tables WHERE quote_ident(table_schema) NOT IN ('information_schema', 'pg_catalog', '_timescaledb_cache', '_timescaledb_catalog', '_timescaledb_internal', '_timescaledb_config', 'timescaledb_information', 'timescaledb_experimental') ORDER BY CASE WHEN quote_ident(table_schema) IN ( SELECT CASE WHEN trim(s[i]) = '\"$user\"' THEN user ELSE trim(s[i]) END FROM generate_series( array_lower(string_to_array(current_setting('search_path'),','),1), array_upper(string_to_array(current_setting('search_path'),','),1) ) as i, string_to_array(current_setting('search_path'),',') s ) THEN 0 ELSE 1 END, 1"))
+
+(def ^:private grafana-table-discovery-replacement
+  "SELECT CASE WHEN quote_ident(table_schema) IN ('public') THEN quote_ident(table_name) ELSE quote_ident(table_schema) || '.' || quote_ident(table_name) END AS \"table\" FROM information_schema.tables WHERE quote_ident(table_schema) NOT IN ('information_schema', 'pg_catalog', '_timescaledb_cache', '_timescaledb_catalog', '_timescaledb_internal', '_timescaledb_config', 'timescaledb_information', 'timescaledb_experimental') ORDER BY 1")
+
+(def ^:private grafana-column-discovery-prefix
+  "The prefix of Grafana's column discovery query (up to the first table name reference),
+  whitespace-normalized. The table name follows this prefix as a single-quoted string."
+  (normalize-whitespace
+   "SELECT quote_ident(column_name) AS \"column\", data_type AS \"type\" FROM information_schema.columns WHERE CASE WHEN array_length(parse_ident('"))
+
+(def ^:private grafana-column-discovery-suffix
+  "The suffix of Grafana's column discovery query (after the table name references),
+  whitespace-normalized. Used to verify the query is the full Grafana column discovery."
+  (normalize-whitespace
+   "string_to_array(current_setting('search_path'),',') s ) END"))
+
+(defn- rewrite-grafana-column-discovery
+  "If sql is Grafana's column discovery query, extract the table name and return
+  a simplified equivalent. Returns nil if not a match."
+  [normalized-sql]
+  (when (and (str/starts-with? normalized-sql grafana-column-discovery-prefix)
+             (str/ends-with? normalized-sql grafana-column-discovery-suffix))
+    (let [after-prefix (subs normalized-sql (count grafana-column-discovery-prefix))
+          table-ref (subs after-prefix 0 (str/index-of after-prefix "'"))
+          parts (str/split table-ref #"\." 2)]
+      (if (= 2 (count parts))
+        (format "SELECT quote_ident(column_name) AS \"column\", data_type AS \"type\" FROM information_schema.columns WHERE quote_ident(table_schema) = '%s' AND quote_ident(table_name) = '%s'"
+                (first parts) (second parts))
+        (format "SELECT quote_ident(column_name) AS \"column\", data_type AS \"type\" FROM information_schema.columns WHERE quote_ident(table_schema) = 'public' AND quote_ident(table_name) = '%s'"
+                table-ref)))))
 
 (defn- apply-grafana-rewrites [sql]
-  (reduce (fn [s {:keys [pattern rewrite]}]
-            (if-let [match (re-find pattern s)]
-              (reduced (rewrite match))
-              s))
-          sql grafana-rewrites))
+  (let [normalized (normalize-whitespace sql)]
+    (cond
+      (= normalized grafana-table-discovery-query)
+      grafana-table-discovery-replacement
+
+      :else
+      (or (rewrite-grafana-column-discovery normalized)
+          sql))))
 
 
 
