@@ -498,6 +498,17 @@
      :direct-mb (when direct (quot direct 1048576))
      :cgroup-mb (when cgroup (quot cgroup 1048576))}))
 
+(defn- cgroup-stat []
+  (try
+    (let [read-long (fn [path]
+                      (let [f (java.io.File. path)]
+                        (when (.exists f)
+                          (Long/parseLong (str/trim (slurp f))))))]
+      {:current (read-long "/sys/fs/cgroup/memory.current")
+       :swap (read-long "/sys/fs/cgroup/memory.swap.current")
+       :max (read-long "/sys/fs/cgroup/memory.max")})
+    (catch Exception _ nil)))
+
 (defn start-memory-monitor!
   "Background daemon that logs memory every second. Returns a fn to stop it."
   []
@@ -506,9 +517,12 @@
            (fn []
              (while @running
                (try
-                 (let [{:keys [heap-mb netty-mb direct-mb cgroup-mb]} (mem-snapshot)]
-                   (log/infof "mem-monitor: heap=%dMB netty=%dMB direct=%sMB cgroup=%sMB"
-                              heap-mb netty-mb direct-mb cgroup-mb))
+                 (let [{:keys [heap-mb netty-mb direct-mb cgroup-mb]} (mem-snapshot)
+                       {:keys [current swap max]} (cgroup-stat)]
+                   (log/infof "mem-monitor: heap=%dMB netty=%dMB direct=%sMB cgroup=%sMB swap=%sMB max=%sMB"
+                              heap-mb netty-mb direct-mb cgroup-mb
+                              (when swap (quot swap 1048576))
+                              (when max (quot max 1048576))))
                  (catch Exception _))
                (Thread/sleep 1000))))]
     (.setDaemon t true)
