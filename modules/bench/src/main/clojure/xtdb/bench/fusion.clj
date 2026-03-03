@@ -476,19 +476,31 @@
     (when (and min-valid-time max-valid-time)
       (exec-cumulative-registration node min-valid-time max-valid-time {}))))
 
+(defn- mem-snapshot []
+  (let [runtime (Runtime/getRuntime)
+        heap-used (- (.totalMemory runtime) (.freeMemory runtime))
+        netty (util/used-netty-memory)
+        direct (when-let [pool (some-> (java.lang.management.ManagementFactory/getPlatformMXBeans
+                                        java.lang.management.BufferPoolMXBean)
+                                       (->> (filter #(= (.getName %) "direct")))
+                                       first)]
+                 (.getMemoryUsed pool))]
+    {:heap-mb (quot heap-used 1048576)
+     :netty-mb (quot netty 1048576)
+     :direct-mb (when direct (quot direct 1048576))}))
+
 (defn wrap-with-logging [op-name f]
   (let [f (b/wrap-in-catch f)]
     (fn [ctx]
-      (let [mem-before (util/used-netty-memory)]
-        (log/infof "oltp-op: %s starting netty=%dMB" op-name (quot mem-before 1048576))
+      (let [{:keys [heap-mb netty-mb direct-mb]} (mem-snapshot)]
+        (log/infof "oltp-op: %s starting heap=%dMB netty=%dMB direct=%sMB"
+                   op-name heap-mb netty-mb direct-mb)
         (let [start (System/nanoTime)
               result (f ctx)
               elapsed-ms (quot (- (System/nanoTime) start) 1000000)
-              mem-after (util/used-netty-memory)]
-          (log/infof "oltp-op: %s succeeded (%dms) netty=%dMB (delta=%+dMB)"
-                     op-name elapsed-ms
-                     (quot mem-after 1048576)
-                     (quot (- mem-after mem-before) 1048576))
+              after (mem-snapshot)]
+          (log/infof "oltp-op: %s succeeded (%dms) heap=%dMB netty=%dMB direct=%sMB"
+                     op-name elapsed-ms (:heap-mb after) (:netty-mb after) (:direct-mb after))
           result)))))
 
 (def all-oltp-choices
