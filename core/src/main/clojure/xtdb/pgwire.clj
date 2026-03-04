@@ -748,6 +748,24 @@
         (format "SELECT quote_ident(column_name) AS \"column\", data_type AS \"type\" FROM information_schema.columns WHERE quote_ident(table_schema) = 'public' AND quote_ident(table_name) = '%s'"
                 table-ref)))))
 
+(defn- quote-reserved-aliases
+  "Grafana commonly uses `AS time` in queries, but TIME is a reserved word in XTDB's
+  SQL grammar (used for TIME ZONE, TIME literals, TIME data type). Quote it so the
+  parser treats it as a delimited identifier."
+  [sql]
+  (str/replace sql #"(?i)\bAS\s+time\b" "AS \"time\""))
+
+(defn- add-timestamp-casts
+  "Grafana's $__timeFilter macro expands to bare ISO string literals like
+  `col BETWEEN '2026-01-01T00:00:00Z' AND '2026-01-02T00:00:00Z'`.
+  PostgreSQL implicitly casts these to timestamps, but XTDB requires explicit
+  TIMESTAMP literals. Also converts ISO 8601 'T' separator to space since
+  XTDB's parser only accepts space-separated timestamp format."
+  [sql]
+  (str/replace sql
+    #"'(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)'"
+    "TIMESTAMP '$1 $2'"))
+
 (defn- apply-grafana-rewrites [sql]
   (let [normalized (normalize-whitespace sql)]
     (cond
@@ -756,7 +774,7 @@
 
       :else
       (or (rewrite-grafana-column-discovery normalized)
-          sql))))
+          (-> sql quote-reserved-aliases add-timestamp-casts)))))
 
 
 

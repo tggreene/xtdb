@@ -92,3 +92,48 @@
           rewritten (#'xtdb.pgwire/apply-grafana-rewrites grafana-query)]
       (t/is (re-find #"table_schema\) = 'myschema'" rewritten) "should extract schema")
       (t/is (re-find #"table_name\) = 'mytable'" rewritten) "should extract table name"))))
+
+(t/deftest reserved-word-alias-quoting-test
+  (t/testing "AS time is quoted because TIME is a reserved word"
+    (let [sql "SELECT recorded_at AS time FROM sensor_readings"
+          rewritten (#'xtdb.pgwire/apply-grafana-rewrites sql)]
+      (t/is (= "SELECT recorded_at AS \"time\" FROM sensor_readings" rewritten))))
+
+  (t/testing "case-insensitive matching"
+    (let [rewritten (#'xtdb.pgwire/apply-grafana-rewrites "SELECT x AS Time FROM t")]
+      (t/is (= "SELECT x AS \"time\" FROM t" rewritten))))
+
+  (t/testing "does not affect non-alias uses"
+    (let [sql "SELECT TIME '12:00:00' FROM t"
+          rewritten (#'xtdb.pgwire/apply-grafana-rewrites sql)]
+      (t/is (= sql rewritten)))))
+
+(t/deftest iso-timestamp-cast-test
+  (t/testing "bare ISO 8601 timestamps are cast to TIMESTAMP literals with T replaced by space"
+    (let [sql "SELECT x FROM t WHERE x BETWEEN '2026-02-25T14:45:44.639Z' AND '2026-03-04T14:45:44.639Z'"
+          rewritten (#'xtdb.pgwire/apply-grafana-rewrites sql)]
+      (t/is (= "SELECT x FROM t WHERE x BETWEEN TIMESTAMP '2026-02-25 14:45:44.639Z' AND TIMESTAMP '2026-03-04 14:45:44.639Z'" rewritten))))
+
+  (t/testing "timestamps without fractional seconds"
+    (let [sql "SELECT x FROM t WHERE x >= '2026-01-01T00:00:00Z'"
+          rewritten (#'xtdb.pgwire/apply-grafana-rewrites sql)]
+      (t/is (= "SELECT x FROM t WHERE x >= TIMESTAMP '2026-01-01 00:00:00Z'" rewritten))))
+
+  (t/testing "does not affect non-ISO strings"
+    (let [sql "SELECT x FROM t WHERE name = 'hello'"
+          rewritten (#'xtdb.pgwire/apply-grafana-rewrites sql)]
+      (t/is (= sql rewritten)))))
+
+(t/deftest grafana-time-filter-query-test
+  (t/testing "combined AND timestamp comparisons work"
+    (xt/execute-tx tu/*node* [[:sql "INSERT INTO readings (_id, recorded_at, value) VALUES (1, TIMESTAMP '2026-03-04 10:00:00+00:00', 42.0)"]])
+    (let [results (xt/q tu/*node*
+                    "SELECT recorded_at AS \"time\", value FROM readings WHERE recorded_at >= TIMESTAMP '2026-03-04 09:00:00+00:00' AND recorded_at <= TIMESTAMP '2026-03-04 11:00:00+00:00' ORDER BY recorded_at")]
+      (t/is (= 1 (count results)))
+      (t/is (= 42.0 (:value (first results))))))
+
+  (t/testing "BETWEEN with TIMESTAMP literals works"
+    (let [results (xt/q tu/*node*
+                    "SELECT recorded_at AS \"time\", value FROM readings WHERE recorded_at BETWEEN TIMESTAMP '2026-03-04 09:00:00+00:00' AND TIMESTAMP '2026-03-04 11:00:00+00:00' ORDER BY recorded_at")]
+      (t/is (= 1 (count results)))
+      (t/is (= 42.0 (:value (first results)))))))
