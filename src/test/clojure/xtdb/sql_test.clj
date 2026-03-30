@@ -2457,9 +2457,54 @@ UNION ALL
            (->> (xt/q tu/*node* "SELECT x FROM range(1, 4) xs (x)")
                 (mapv :x))))
 
-  (t/is (= (sql/plan "SELECT x FROM generate_series(1, 4) xs (x)")
-           (sql/plan "SELECT x FROM range(1, 4) xs (x)"))
-        "RANGE produces the same plan as GENERATE_SERIES"))
+  (t/is (not= (sql/plan "SELECT x FROM generate_series(1, 4) xs (x)")
+              (sql/plan "SELECT x FROM range(1, 4) xs (x)"))
+        "RANGE (exclusive) produces a different plan from GENERATE_SERIES (inclusive)")
+
+  (t/is (= [1]
+           (->> (xt/q tu/*node* "SELECT x FROM generate_series(1, 1) xs (x)")
+                (mapv :x))))
+
+  (xt/submit-tx tu/*node* [[:sql "INSERT INTO foo RECORDS {_id: 1, start: -1, end: 3}, {_id: 2, start: 4, end: 6}"]])
+
+  (t/is (= [{:xt/id 2, :x 4}
+            {:xt/id 2, :x 5}
+            {:xt/id 2, :x 6}
+            {:xt/id 1, :x -1}
+            {:xt/id 1, :x 0}
+            {:xt/id 1, :x 1}
+            {:xt/id 1, :x 2}
+            {:xt/id 1, :x 3}]
+           (-> (xt/q tu/*node* "SELECT _id, x FROM foo, generate_series(start, end) xs (x)"))))
+
+  (t/testing "range with computed bounds from array functions"
+    (t/is (= [{:i 1}]
+             (xt/q tu/*node* "SELECT i FROM range(array_lower(string_to_array('public', ','), 1), array_upper(string_to_array('public', ','), 1)) AS xs(i)"))))
+
+  (t/testing "array subscript on column reference with variable index from generate_series"
+    (t/is (= [{:i 1, :val "a"} {:i 2, :val "b"} {:i 3, :val "c"}]
+             (xt/q tu/*node* "SELECT i, s[i] AS val FROM range(1, 4) AS xs(i), (VALUES (string_to_array('a,b,c', ','))) AS t(s)")))))
+
+(t/deftest test-function-as-from-source
+  (t/testing "string_to_array as FROM-clause table source produces single row with array"
+    (t/is (= [{:val ["a" "b" "c"]}]
+             (xt/q tu/*node* "SELECT s AS val FROM string_to_array('a,b,c', ',') AS t(s)"))))
+
+  (t/testing "cross join range with string_to_array in FROM"
+    (t/is (= [{:i 1, :val "a"} {:i 2, :val "b"} {:i 3, :val "c"}]
+             (xt/q tu/*node* "SELECT i, s[i] AS val FROM range(1, 4) AS xs(i), string_to_array('a,b,c', ',') AS t(s)"))))
+
+  (t/testing "default column name uses function name when no column projection"
+    (t/is (= [{:string-to-array ["a" "b" "c"]}]
+             (xt/q tu/*node* "SELECT * FROM string_to_array('a,b,c', ',') AS t"))))
+
+  (t/testing "function name as explicit column projection"
+    (t/is (= [{:string-to-array ["a" "b"]}]
+             (xt/q tu/*node* "SELECT string_to_array FROM string_to_array('a,b', ',') AS t(string_to_array)"))))
+
+  (t/testing "function in FROM with WITH ORDINALITY"
+    (t/is (= [{:s ["a" "b" "c"], :n 1}]
+             (xt/q tu/*node* "SELECT * FROM string_to_array('a,b,c', ',') WITH ORDINALITY AS t(s, n)")))))
 
 (t/deftest star-goes-at-end-too-3706
   (xt/execute-tx tu/*node* [[:sql "INSERT INTO foo RECORDS {_id: 1, x: 'foo'}"]])
