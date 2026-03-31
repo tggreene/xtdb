@@ -1,0 +1,171 @@
+= Grafana PostgreSQL plugin compatibility
+
+:written: 2026-03-30
+
+Grafana's PostgreSQL data source plugin connects to XTDB via the pgwire server.
+On startup, Grafana sends introspection queries to discover tables and columns, then sends user-defined time-series queries at dashboard refresh time.
+This document describes the exact SQL Grafana sends, the XTDB features each query exercises, and where each feature is tested.
+
+== Version detection
+
+Grafana checks whether the server version supports certain PostgreSQL features.
+It queries:
+
+[source,sql]
+----
+SELECT current_setting('server_version_num')::int/100 AS version
+----
+
+This requires `current_setting('server_version_num')` to return a string parseable as a version number.
+XTDB returns `'160000'` (PostgreSQL 16), which divided by 100 gives `1600`.
+
+Features exercised:
+
+* `current_setting(name)` — session variable lookup
+* `::int` cast operator (PostgreSQL-style cast syntax)
+* Integer division
+
+Tests: `xtdb.pgwire.grafana-test/version-detection-test`, `xtdb.sql.expr-test/test-current-setting-server-version-num`
+
+== Table discovery
+
+Grafana's `postgresMetaQuery.ts` sends a table discovery query to populate the table selector.
+The full query (with `search_path` subquery inlined in both `SELECT` and `ORDER BY`) is:
+
+[source,sql]
+----
+SELECT
+  CASE WHEN quote_ident(table_schema) IN (
+    SELECT CASE WHEN trim(s[i]) = '"$user"' THEN user ELSE trim(s[i]) END
+    FROM generate_series(
+      array_lower(string_to_array(current_setting('search_path'),','),1),
+      array_upper(string_to_array(current_setting('search_path'),','),1)
+    ) as i,
+    string_to_array(current_setting('search_path'),',') s
+  )
+  THEN quote_ident(table_name)
+  ELSE quote_ident(table_schema) || '.' || quote_ident(table_name)
+  END AS "table"
+FROM information_schema.tables
+WHERE quote_ident(table_schema) NOT IN (
+  'information_schema', 'pg_catalog',
+  '_timescaledb_cache', '_timescaledb_catalog',
+  '_timescaledb_internal', '_timescaledb_config',
+  'timescaledb_information', 'timescaledb_experimental'
+)
+ORDER BY CASE WHEN quote_ident(table_schema) IN (
+  SELECT CASE WHEN trim(s[i]) = '"$user"' THEN user ELSE trim(s[i]) END
+  FROM generate_series(
+    array_lower(string_to_array(current_setting('search_path'),','),1),
+    array_upper(string_to_array(current_setting('search_path'),','),1)
+  ) as i,
+  string_to_array(current_setting('search_path'),',') s
+) THEN 0 ELSE 1 END, 1
+----
+
+The `"$user"` placeholder in the search_path is a PostgreSQL convention meaning 'a schema with the same name as the current user'.
+Grafana replaces it with the actual `USER` value via the `CASE` expression.
+XTDB's `current_setting('search_path')` returns `'"$user", public'` to match PostgreSQL's default.
+
+Features exercised:
+
+* `information_schema.tables` — system catalogue table
+* `quote_ident(name)` — identifier quoting function
+* `CASE … IN (subquery)` — subquery in `IN` predicate
+* `current_setting('search_path')` — search_path session variable
+* `string_to_array(text, delimiter)` — splits a string into an array
+* `array_lower(arr, dim)` / `array_upper(arr, dim)` — array bounds functions
+* `generate_series(start, stop)` as a FROM-clause table-valued function
+* `s[i]` — array subscript with a column reference as index
+* `trim(expr)` — whitespace trimming
+* `USER` keyword — synonym for `CURRENT_USER`
+* Scalar subquery repeated verbatim in `ORDER BY`
+
+Tests:
+
+* `xtdb.pgwire.grafana-test/grafana-table-discovery-test` — integration test against a live node
+* `xtdb.sql-test/test-generate-series-3212` — `generate_series` in FROM with computed bounds; `s[i]` variable subscript
+* `xtdb.sql.expr-test/test-postgres-compat-functions` — `quote_ident`, `parse_ident`, `string_to_array`, `array_lower`, `array_upper`, `current_setting`
+* `xtdb.sql.expr-test/test-bare-user-keyword` — `USER` as `CURRENT_USER` alias
+
+== Column discovery
+
+When a user selects a table in Grafana, it runs a column discovery query from `postgresMetaQuery.ts` (`getSchema`).
+The query uses `parse_ident` to handle both plain and schema-qualified table names:
+
+[source,sql]
+----
+SELECT quote_ident(column_name) AS "column", data_type AS "type"
+FROM information_schema.columns
+WHERE CASE WHEN array_length(parse_ident('readings'),1) = 2
+  THEN quote_ident(table_schema) = (parse_ident('readings'))[1]
+    AND quote_ident(table_name) = (parse_ident('readings'))[2]
+  ELSE quote_ident(table_name) = 'readings'
+    AND quote_ident(table_schema) IN (
+      SELECT CASE WHEN trim(s[i]) = '"$user"' THEN user ELSE trim(s[i]) END
+      FROM generate_series(
+        array_lower(string_to_array(current_setting('search_path'),','),1),
+        array_upper(string_to_array(current_setting('search_path'),','),1)
+      ) AS xs(i),
+      string_to_array(current_setting('search_path'),',') AS t(s)
+    )
+END
+----
+
+For a schema-qualified name like `'public.readings'`, `array_length(parse_ident(...), 1)` returns 2 and the first branch is taken.
+For an unqualified name, the second branch filters by search_path membership.
+
+Features exercised (in addition to those listed for table discovery):
+
+* `information_schema.columns` — system catalogue table
+* `array_length(arr, dim)` — array length function
+* `parse_ident(text)` — splits a qualified identifier string into an array of parts
+* `(parse_ident(...))[1]` / `[2]` — array subscript on an inline function call result
+* `CASE` used as a `WHERE` predicate rather than a `SELECT` expression
+
+Tests:
+
+* `xtdb.pgwire.grafana-test/grafana-column-discovery-test` — integration test
+* `xtdb.sql.expr-test/test-postgres-compat-functions` — `parse_ident` parsing; array subscript on expression result `(parse_ident(...))[1]`
+
+== Time-series queries
+
+Grafana's time-series query macros expand `$__timeFilter(column)` to a `BETWEEN` predicate with ISO 8601 timestamp strings.
+The expanded query looks like:
+
+[source,sql]
+----
+SELECT recorded_at AS time, value
+FROM readings
+WHERE recorded_at BETWEEN '2026-03-04T09:00:00Z' AND '2026-03-04T11:00:00Z'
+ORDER BY time
+----
+
+The timestamp strings are bare UTF-8 values with no explicit `TIMESTAMP` cast.
+XTDB applies implicit coercion when one side of a comparison is a `timestamp-tz` column and the other is a `utf8` literal, converting the string to a timestamp for comparison.
+
+Grafana also generates `AS time` (unquoted) as the time-column alias.
+`TIME` is a SQL reserved word, so XTDB must accept it as an alias in this context.
+
+Features exercised:
+
+* Implicit UTF-8 to timestamp coercion in `BETWEEN` and comparison operators
+* `AS time` with an unquoted reserved-word alias
+
+Tests:
+
+* `xtdb.pgwire.grafana-test/grafana-as-time-alias-test` — `AS time` alias handling
+* `xtdb.pgwire.grafana-test/grafana-time-series-query-test` — end-to-end query with explicit `TIMESTAMP` literals
+* `xtdb.sql.expr-test/test-implicit-utf8-to-temporal-coercion` — implicit coercion for `>=`, `<=`, `>`, `<`, and `BETWEEN`
+
+== PG version claim and current_setting behaviour
+
+XTDB advertises itself as PostgreSQL 16 (`server_version_num = '160000'`) to enable Grafana to use modern SQL features.
+`current_setting` is used in both table and column discovery to read `search_path`.
+XTDB's default `search_path` is `'"$user", public'`, matching PostgreSQL's default.
+
+== CURRENT_USER / USER
+
+The discovery queries use the `USER` keyword (equivalent to `CURRENT_USER` per the SQL standard) to resolve the `"$user"` placeholder in `search_path`.
+XTDB supports both `CURRENT_USER` and the bare `USER` keyword.
+See `xtdb.sql.expr-test/test-bare-user-keyword`.
