@@ -58,10 +58,28 @@
                                                       (.getServiceAccountUser)
                                                       (.getId))}})})))
 
+(defn- disable-master-realm-ssl!
+  "On macOS Docker Desktop, host traffic arrives via the VM bridge rather than localhost.
+  The master realm's sslRequired:external rejects this as non-local HTTP.
+  Use kcadm.sh from inside the container (where it IS localhost) to disable it."
+  [^KeycloakContainer c]
+  (let [result (.execInContainer c (into-array String
+                                               ["/bin/bash" "-c"
+                                                (format (str "/opt/keycloak/bin/kcadm.sh config credentials"
+                                                             " --server http://localhost:8080"
+                                                             " --realm master --user %s --password %s"
+                                                             " && /opt/keycloak/bin/kcadm.sh update realms/master -s sslRequired=NONE")
+                                                        (.getAdminUsername c) (.getAdminPassword c))]))]
+    (when-not (zero? (.getExitCode result))
+      (throw (ex-info "Failed to disable SSL on master realm"
+                      {:stdout (.getStdout result)
+                       :stderr (.getStderr result)})))))
+
 (t/use-fixtures :once
   (fn [f]
     (tu/with-container container
       (fn [_]
+        (disable-master-realm-ssl! container)
         (f)))))
 
 (t/deftest test-token-expiry
