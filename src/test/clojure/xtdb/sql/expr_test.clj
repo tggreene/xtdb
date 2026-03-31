@@ -1693,6 +1693,19 @@ SELECT DATE_BIN(INTERVAL 'P1D', TIMESTAMP '2020-01-01T00:00:00Z'),
   (t/is (= [{:sp "\"$user\", public"}]
            (xt/q tu/*node* "SELECT current_setting('search_path') AS sp"))
         "current_setting('search_path') returns PG-compatible search_path"))
+
+(t/deftest test-array-subscript-on-expression
+  (t/is (= [{:val "a"}]
+           (xt/q tu/*node* "SELECT (string_to_array('a,b,c', ','))[1] AS val"))
+        "(string_to_array(...))[1] extracts first element")
+
+  (t/is (= [{:schema "myschema"}]
+           (xt/q tu/*node* "SELECT (parse_ident('myschema.mytable'))[1] AS schema"))
+        "(parse_ident(...))[1] extracts schema part")
+
+  (t/is (= [{:tbl "mytable"}]
+           (xt/q tu/*node* "SELECT (parse_ident('myschema.mytable'))[2] AS tbl"))
+        "(parse_ident(...))[2] extracts table part"))
 ;; TODO: Add this?
 #_(t/deftest test-random-fn
     (t/is (= true (-> (xt/q tu/*node* "SELECT 0.0 <= random() AS greater") first :greater)))
