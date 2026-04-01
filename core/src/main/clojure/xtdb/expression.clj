@@ -1395,6 +1395,7 @@
 (defn current-setting [setting-name]
   (case setting-name
     "server_version_num" "160000"
+    "search_path" "\"$user\", public"
     (throw (err/unsupported ::unsupported-setting (str "Setting not supported: " setting-name)
                             {:setting-name setting-name}))))
 
