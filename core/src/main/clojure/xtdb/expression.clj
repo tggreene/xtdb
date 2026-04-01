@@ -1632,6 +1632,12 @@
                     (f #xt/type [:list :utf8]
                        `(string-to-chars (resolve-string ~s))))})
 
+(defmethod codegen-call [:string_to_array :null :utf8] [_]
+  {:return-type #xt/type :null, :->call-code (constantly nil)})
+
+(defmethod codegen-call [:string_to_array :null :null] [_]
+  {:return-type #xt/type :null, :->call-code (constantly nil)})
+
 (defn- scan-quoted-ident
   "Scans a quoted identifier starting after the opening quote at position `start`.
   Returns [parsed-string position-after-closing-quote]."
