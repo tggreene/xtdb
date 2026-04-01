@@ -1559,6 +1559,42 @@
                   `(-> (.replace (resolve-string ~s) (resolve-string ~target) (resolve-string ~replacement))
                        (resolve-utf8-buf)))})
 
+(def ^:private ^java.util.Set sql-keywords
+  "SQL keywords derived from SqlLexer's vocabulary at load time, used by quote_ident.
+  Coupled to SqlLexer token names — if new non-keyword tokens are added to the grammar
+  they must be added to the `excluded` set below, otherwise quote_ident will over-quote."
+  (let [vocab (xtdb.antlr.SqlLexer/VOCABULARY)
+        ;; non-keyword token names to exclude (punctuation, operators, literals, identifiers)
+        excluded #{"BLOCK_COMMENT" "LINE_COMMENT" "WHITESPACE"
+                   "UNSIGNED_FLOAT" "UNSIGNED_INTEGER" "CHARACTER_STRING" "C_ESCAPES_STRING"
+                   "BINARY_STRING" "POSTGRES_PARAMETER_SPECIFICATION"
+                   "COMMA" "DOT" "SEMI" "COLON" "QUESTION"
+                   "LPAREN" "RPAREN" "LBRACK" "RBRACK" "LBRACE" "RBRACE"
+                   "PLUS" "MINUS" "ASTERISK" "SOLIDUS" "PERCENT" "AMPERSAND" "TILDE"
+                   "CONCAT" "EQUAL" "NOT_EQUAL" "LT" "GT" "GE" "LE" "LT_GT"
+                   "BITWISE_OR" "BITWISE_XOR" "BITWISE_SHIFT_LEFT" "BITWISE_SHIFT_RIGHT"
+                   "JSON_ARROW" "JSON_ARROW_TEXT" "JSON_PATH" "JSON_PATH_TEXT"
+                   "PG_CAST" "PG_REGEX_I" "PG_NOT_REGEX" "PG_NOT_REGEX_I"
+                   "REGULAR_IDENTIFIER" "DELIMITED_IDENTIFIER"
+                   "DOLLAR_TAG" "DM_TEXT" "DM_END_TAG"}
+        ks (java.util.HashSet.)]
+    (dotimes [i (.getMaxTokenType vocab)]
+      (when-let [sym (.getSymbolicName vocab (inc i))]
+        (when-not (excluded sym)
+          (.add ks (.toLowerCase sym java.util.Locale/ROOT)))))
+    ks))
+
+(defn quote-ident ^String [^String s]
+  (if (and (re-matches #"[a-z_][a-z0-9_]*" s)
+           (not (.contains sql-keywords s)))
+    s
+    (str \" (.replace s "\"" "\"\"") \")))
+
+(defmethod codegen-call [:quote_ident :utf8] [_]
+  {:return-type #xt/type :utf8
+   :->call-code (fn [[s]]
+                  `(resolve-utf8-buf (quote-ident (resolve-string ~s))))})
+
 (defn- strings->list-reader ^xtdb.arrow.ListValueReader [^objects arr]
   (let [box (ValueBox.)
         bufs (object-array (mapv #(resolve-utf8-buf ^String %) arr))]
