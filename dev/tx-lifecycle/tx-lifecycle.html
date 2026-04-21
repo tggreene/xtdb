@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Transaction Lifecycle & Kafka linger.ms</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reset.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/theme/black.css">
+<style>
+  :root {
+    --block-color: #ff4444;
+    --path-color: #4af;
+    --ok-color: #4c4;
+    --dim-color: #888;
+    --mono: 'Fira Mono', 'Cascadia Code', 'Consolas', monospace;
+  }
+
+  .reveal { font-family: var(--mono); }
+  .reveal h1, .reveal h2, .reveal h3 { font-family: var(--mono); text-transform: none; letter-spacing: -0.02em; }
+  .reveal h1 { font-size: 1.8em; }
+  .reveal h2 { font-size: 1.3em; color: #adf; border-bottom: 1px solid #334; padding-bottom: 0.2em; margin-bottom: 0.6em; }
+
+  /* Pipeline diagrams */
+  .pipeline {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0;
+    font-family: var(--mono);
+    font-size: 0.7em;
+    margin: 0.8em 0;
+  }
+  .pipeline .step {
+    background: #1e2a3a;
+    border: 1px solid #3a5a7a;
+    padding: 0.3em 0.6em;
+    border-radius: 4px;
+    white-space: nowrap;
+    color: #cdf;
+  }
+  .pipeline .arrow {
+    color: #4af;
+    padding: 0 0.2em;
+    font-size: 1.1em;
+  }
+  .pipeline .block {
+    background: #3a1515;
+    border: 1px solid #ff4444;
+    color: #ff9090;
+    padding: 0.3em 0.6em;
+    border-radius: 4px;
+    white-space: nowrap;
+  }
+  .pipeline .label {
+    font-size: 0.75em;
+    color: #f84;
+    font-weight: bold;
+    margin-left: 0.3em;
+  }
+
+  /* Timeline */
+  .timeline {
+    font-family: var(--mono);
+    font-size: 0.72em;
+    margin: 0.6em 0;
+    line-height: 1.9;
+  }
+  .timeline .tl-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+    margin: 0.2em 0;
+  }
+  .timeline .tl-label {
+    min-width: 11em;
+    color: #aaa;
+    text-align: right;
+  }
+  .timeline .tl-bar {
+    display: flex;
+    align-items: center;
+    gap: 0;
+  }
+  .tl-send { background: #1e3a5f; border: 1px solid #4af; color: #cdf; padding: 0.15em 0.4em; border-radius: 3px; white-space: nowrap; }
+  .tl-linger { background: #3a2800; border: 1px solid #f84; color: #f84; padding: 0.15em 0.6em; border-radius: 3px; white-space: nowrap; }
+  .tl-ack { background: #1a3a1a; border: 1px solid #4c4; color: #8f8; padding: 0.15em 0.4em; border-radius: 3px; white-space: nowrap; }
+  .tl-dash { color: #555; padding: 0 0.1em; }
+
+  /* Thread diagram */
+  .threads {
+    font-family: var(--mono);
+    font-size: 0.7em;
+    margin: 0.6em 0;
+  }
+  .thread-row {
+    display: flex;
+    align-items: center;
+    gap: 0.4em;
+    margin: 0.25em 0;
+  }
+  .th-label { min-width: 8em; color: #aaa; }
+  .th-send { background: #1e3a5f; border: 1px solid #4af; color: #cdf; padding: 0.1em 0.5em; border-radius: 3px; }
+  .th-await { background: #2a1a3a; border: 1px solid #a4f; color: #c8f; padding: 0.1em 0.5em; border-radius: 3px; }
+  .th-line { color: #555; letter-spacing: -0.05em; }
+
+  /* Code block override */
+  .reveal pre {
+    background: #111;
+    border: 1px solid #333;
+    border-radius: 6px;
+    font-family: var(--mono);
+    font-size: 0.72em;
+    padding: 0.8em 1em;
+    text-align: left;
+    width: 100%;
+    box-shadow: none;
+  }
+  .reveal pre code { color: #ccc; background: transparent; }
+
+  /* Table */
+  .bench-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--mono);
+    font-size: 0.78em;
+    margin-top: 0.8em;
+  }
+  .bench-table th {
+    background: #1a2a3a;
+    color: #8cf;
+    padding: 0.5em 0.8em;
+    border: 1px solid #334;
+    text-align: left;
+  }
+  .bench-table td {
+    padding: 0.5em 0.8em;
+    border: 1px solid #334;
+    color: #ccc;
+  }
+  .bench-table tr:nth-child(even) td { background: #131820; }
+  .bench-table .bad { color: #f66; font-weight: bold; }
+  .bench-table .good { color: #6f6; }
+
+  .note {
+    font-size: 0.6em;
+    color: #666;
+    margin-top: 0.8em;
+    font-family: var(--mono);
+  }
+
+  .highlight-red { color: #ff6060; }
+  .highlight-blue { color: #6af; }
+  .highlight-green { color: #6f6; }
+  .highlight-orange { color: #fa6; }
+
+  /* Arrow connector */
+  .arr { color: #4af; }
+
+  /* Section separator */
+  .sep { height: 1px; background: #334; margin: 0.6em 0; }
+</style>
+</head>
+<body>
+<div class="reveal">
+<div class="slides">
+
+<!-- Slide 1: Title -->
+<section>
+  <h1>Transaction Lifecycle<br>&amp; Kafka <code>linger.ms</code></h1>
+  <p style="color:#888; font-family: var(--mono); font-size:0.9em; margin-top:1em;">
+    Why 5ms costs us 2x
+  </p>
+</section>
+
+<!-- Slide 2: Sync Path -->
+<section>
+  <h2>Transaction Path — Sync Mode</h2>
+
+  <div class="pipeline">
+    <div class="step">Client</div>
+    <div class="arrow">→</div>
+    <div class="step">pgwire</div>
+    <div class="arrow">→</div>
+    <div class="step">dml-buf</div>
+    <div class="arrow">→</div>
+    <div class="step">cmd-commit</div>
+    <div class="arrow">→</div>
+    <div class="step">submitTxBlocking</div>
+    <div class="arrow">→</div>
+    <div class="step">appendMessageBlocking</div>
+    <div class="arrow">→</div>
+    <div class="step">producer.send()</div>
+  </div>
+
+  <div class="pipeline fragment" style="margin-top:0.2em; padding-left: 3em;">
+    <div class="arrow" style="color:#555;">↓</div>
+  </div>
+  <div class="pipeline fragment" style="padding-left:3em;">
+    <div class="block">BLOCK B1: Kafka ack wait</div>
+  </div>
+
+  <div class="pipeline fragment" style="margin-top:0.4em; padding-left: 3em;">
+    <div class="arrow" style="color:#555;">↓</div>
+  </div>
+  <div class="pipeline fragment" style="padding-left:3em;">
+    <div class="step">awaitTxBlocking</div>
+  </div>
+
+  <div class="pipeline fragment" style="margin-top:0.2em; padding-left: 3em;">
+    <div class="arrow" style="color:#555;">↓</div>
+  </div>
+  <div class="pipeline fragment" style="padding-left:3em;">
+    <div class="block">BLOCK B2: Indexer wait</div>
+  </div>
+
+  <div class="pipeline fragment" style="margin-top:0.4em; padding-left: 3em;">
+    <div class="arrow" style="color:#555;">↓</div>
+  </div>
+  <div class="pipeline fragment" style="padding-left:3em;">
+    <div class="step">response to client</div>
+  </div>
+
+  <p class="fragment note" style="margin-top:0.6em;">
+    Both blocking points run sequentially in the calling thread.
+  </p>
+</section>
+
+<!-- Slide 3: Async Path -->
+<section>
+  <h2>Transaction Path — Async Mode</h2>
+
+  <div class="pipeline">
+    <div class="step">Client</div>
+    <div class="arrow">→</div>
+    <div class="step">pgwire</div>
+    <div class="arrow">→</div>
+    <div class="step">dml-buf</div>
+    <div class="arrow">→</div>
+    <div class="step">cmd-commit</div>
+    <div class="arrow">→</div>
+    <div class="step">submitTx</div>
+    <div class="arrow">→</div>
+    <div class="step">appendMessageBlocking</div>
+    <div class="arrow">→</div>
+    <div class="step">producer.send()</div>
+  </div>
+
+  <div class="pipeline" style="margin-top:0.2em; padding-left: 3em;">
+    <div class="arrow" style="color:#555;">↓</div>
+  </div>
+  <div class="pipeline" style="padding-left:3em;">
+    <div class="block">BLOCK B1: Kafka ack wait</div>
+  </div>
+
+  <div class="pipeline" style="margin-top:0.4em; padding-left: 3em;">
+    <div class="arrow" style="color:#555;">↓</div>
+  </div>
+  <div class="pipeline" style="padding-left:3em;">
+    <div class="step" style="color:#888;">awaitTxBlocking</div>
+    <div class="label" style="color:#888; font-size:0.9em;">— skipped in async mode</div>
+  </div>
+
+  <div style="margin-top: 0.8em; padding: 0.5em 1em; background: #1a3a1a; border: 1px solid #4c4; border-radius:4px; font-size:0.72em; color:#8f8; display:inline-block;">
+    Returns txId immediately after Kafka ack — does not wait for indexer
+  </div>
+
+  <p class="note" style="margin-top:0.6em;">
+    B1 (Kafka ack) remains. B2 (indexer) is gone.
+  </p>
+</section>
+
+<!-- Slide 4: What linger.ms Does -->
+<section>
+  <h2>What <code>linger.ms</code> Does</h2>
+
+  <p style="font-size:0.75em; color:#aaa; margin-bottom:0.4em;">
+    The Kafka producer batches messages before sending to the broker.
+  </p>
+
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:1em; margin-top:0.6em;">
+    <div style="background:#111; border:1px solid #333; border-radius:6px; padding:0.8em;">
+      <div style="color:#6af; font-size:0.75em; margin-bottom:0.5em; font-weight:bold;">linger.ms = 0</div>
+      <div class="timeline" style="font-size:0.68em;">
+        <div>msg arrives</div>
+        <div style="color:#555; padding: 0.1em 0;">↓</div>
+        <div style="color:#888;">I/O cycle completes</div>
+        <div style="color:#555; padding: 0.1em 0;">↓</div>
+        <div style="color:#6af;">sent immediately</div>
+      </div>
+      <div style="font-size:0.6em; color:#666; margin-top:0.5em;">no artificial delay</div>
+    </div>
+    <div style="background:#111; border:1px solid #333; border-radius:6px; padding:0.8em;">
+      <div style="color:#fa6; font-size:0.75em; margin-bottom:0.5em; font-weight:bold;">linger.ms = 5</div>
+      <div class="timeline" style="font-size:0.68em;">
+        <div>msg arrives</div>
+        <div style="color:#555; padding: 0.1em 0;">↓</div>
+        <div style="color:#fa6;">wait up to 5ms</div>
+        <div style="color:#555; padding: 0.1em 0;">↓</div>
+        <div style="color:#8f8;">send entire buffer<br>as one batch</div>
+      </div>
+      <div style="font-size:0.6em; color:#666; margin-top:0.5em;">better throughput under load</div>
+    </div>
+  </div>
+
+  <p class="fragment" style="font-size:0.72em; color:#aaa; margin-top:0.8em;">
+    The intent: accumulate multiple messages and amortise the network round-trip cost.
+  </p>
+</section>
+
+<!-- Slide 5: Serial Sends -->
+<section>
+  <h2>Why <code>linger.ms=5</code> Hurts — Serial</h2>
+
+  <p style="font-size:0.72em; color:#aaa; margin-bottom:0.6em;">Each commit blocks until ack. Next send can't start until ack arrives.</p>
+
+  <div style="background:#111; border:1px solid #333; border-radius:6px; padding:0.8em; font-family: var(--mono); font-size:0.7em;">
+    <div style="color:#f84; margin-bottom:0.3em;">linger.ms = 5 (serial)</div>
+    <div style="white-space:nowrap; overflow-x:auto; color:#ccc;">
+      send(1)&nbsp;<span style="background:#3a2800;color:#fa6;padding:0 0.3em;border-radius:2px;">[5ms]</span><span style="color:#4c4;">[ack]</span>&nbsp;──&nbsp;send(2)&nbsp;<span style="background:#3a2800;color:#fa6;padding:0 0.3em;border-radius:2px;">[5ms]</span><span style="color:#4c4;">[ack]</span>&nbsp;──&nbsp;send(3)&nbsp;<span style="background:#3a2800;color:#fa6;padding:0 0.3em;border-radius:2px;">[5ms]</span><span style="color:#4c4;">[ack]</span>&nbsp;── ...
+    </div>
+    <div style="color:#f66; margin-top:0.4em;">total wasted: N &times; 5ms</div>
+  </div>
+
+  <div class="sep fragment"></div>
+
+  <div class="fragment" style="background:#111; border:1px solid #333; border-radius:6px; padding:0.8em; font-family: var(--mono); font-size:0.7em;">
+    <div style="color:#6af; margin-bottom:0.3em;">linger.ms = 0 (serial)</div>
+    <div style="white-space:nowrap; overflow-x:auto; color:#ccc;">
+      send(1)&nbsp;<span style="color:#4c4;">[ack]</span>&nbsp;──&nbsp;send(2)&nbsp;<span style="color:#4c4;">[ack]</span>&nbsp;──&nbsp;send(3)&nbsp;<span style="color:#4c4;">[ack]</span>&nbsp;── ...
+    </div>
+    <div style="color:#6f6; margin-top:0.4em;">no wasted time — sends whenever ready</div>
+  </div>
+
+  <p class="fragment note" style="margin-top:0.8em;">
+    5000 serial commits &times; 5ms = 25 seconds of artificial waiting, before any real network time.
+  </p>
+</section>
+
+<!-- Slide 6: Async + linger still hurts -->
+<section>
+  <h2>Still Hurts in Async Mode</h2>
+
+  <p style="font-size:0.72em; color:#aaa; margin-bottom:0.6em;">
+    <code>appendMessageBlocking</code> calls <code>producer.send()</code> then parks until the Kafka callback fires.
+    The next commit can't start until it returns.
+  </p>
+
+  <div style="background:#111; border:1px solid #333; border-radius:6px; padding:0.9em; font-family: var(--mono); font-size:0.72em;">
+    <div style="margin:0.3em 0;">
+      <span style="color:#aaa;">COMMIT₁:</span>
+      <span style="color:#4af;"> send(msg₁)</span>
+      <span style="color:#555;"> → </span>
+      <span style="color:#ff8060;">await(ack₁)</span>
+      <span style="color:#555;"> → </span>
+      <span style="color:#8f8;">return txId₁</span>
+    </div>
+    <div style="margin:0.3em 0;">
+      <span style="color:#aaa;">COMMIT₂:</span>
+      <span style="color:#4af;"> send(msg₂)</span>
+      <span style="color:#555;"> → </span>
+      <span style="color:#ff8060;">await(ack₂)</span>
+      <span style="color:#555;"> → </span>
+      <span style="color:#8f8;">return txId₂</span>
+    </div>
+    <div style="margin:0.3em 0;">
+      <span style="color:#aaa;">COMMIT₃:</span>
+      <span style="color:#4af;"> send(msg₃)</span>
+      <span style="color:#555;"> → </span>
+      <span style="color:#ff8060;">await(ack₃)</span>
+      <span style="color:#555;"> → </span>
+      <span style="color:#8f8;">return txId₃</span>
+    </div>
+  </div>
+
+  <div class="fragment" style="margin-top:0.8em; padding:0.5em 0.8em; background:#2a1515; border:1px solid #f44; border-radius:4px; font-size:0.72em; color:#f88;">
+    Only one message in the producer buffer at a time.<br>
+    Batching never happens. linger.ms=5 is pure latency penalty.
+  </div>
+</section>
+
+<!-- Slide 7: When batching works -->
+<section>
+  <h2>When Batching Works — Multiple Connections</h2>
+
+  <p style="font-size:0.72em; color:#aaa; margin-bottom:0.5em;">
+    Concurrent threads share the same producer. Sends overlap in the buffer.
+  </p>
+
+  <div class="threads">
+    <div class="thread-row">
+      <div class="th-label">Thread A:</div>
+      <div class="th-send">send(msg₁)</div>
+      <div class="th-line">─────────────</div>
+      <div class="th-await">await(ack)</div>
+      <div class="th-line">──</div>
+    </div>
+    <div class="thread-row">
+      <div class="th-label">Thread B:</div>
+      <div class="th-line">────</div>
+      <div class="th-send">send(msg₂)</div>
+      <div class="th-line">──────────</div>
+      <div class="th-await">await(ack)</div>
+      <div class="th-line">──</div>
+    </div>
+    <div class="thread-row">
+      <div class="th-label">Thread C:</div>
+      <div class="th-line">────────</div>
+      <div class="th-send">send(msg₃)</div>
+      <div class="th-line">──────</div>
+      <div class="th-await">await(ack)</div>
+      <div class="th-line">──</div>
+    </div>
+  </div>
+
+  <div class="fragment" style="text-align:center; margin:0.5em 0; font-size:0.7em; color:#555;">↓</div>
+  <div class="fragment" style="background:#111; border:1px solid #4af; border-radius:4px; padding:0.4em 0.8em; font-size:0.7em; color:#8cf; display:inline-block;">
+    Producer buffer: [msg₁, msg₂, msg₃]
+  </div>
+  <div class="fragment" style="text-align:center; margin:0.3em 0; font-size:0.7em; color:#555;">↓</div>
+  <div class="fragment" style="background:#1a3a1a; border:1px solid #4c4; border-radius:4px; padding:0.4em 0.8em; font-size:0.7em; color:#8f8; display:inline-block;">
+    One batched network request
+  </div>
+  <p class="fragment note" style="margin-top:0.6em;">
+    With 50 threads the 5ms cost is mostly absorbed — matches linger.ms=0 throughput.
+  </p>
+</section>
+
+<!-- Slide 8: Benchmark Results -->
+<section>
+  <h2>Benchmark Results</h2>
+
+  <table class="bench-table">
+    <thead>
+      <tr>
+        <th>Mode</th>
+        <th>linger.ms=0</th>
+        <th>linger.ms=5</th>
+        <th>ratio</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Sync, serial</td>
+        <td class="good">30s</td>
+        <td class="bad">63s</td>
+        <td class="bad">2.1x slower</td>
+      </tr>
+      <tr>
+        <td>Async, serial</td>
+        <td class="good">5.4s</td>
+        <td class="bad">39.5s</td>
+        <td class="bad">7.3x slower</td>
+      </tr>
+      <tr>
+        <td>10 threads</td>
+        <td class="good">5.7s</td>
+        <td>9.5s</td>
+        <td>1.7x slower</td>
+      </tr>
+      <tr>
+        <td>50 threads</td>
+        <td class="good">5.4s</td>
+        <td class="good">5.0s</td>
+        <td style="color:#aaa;">~same</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p class="note">5000 docs, batch-size 1, Kafka (local Docker)</p>
+
+  <p class="fragment" style="font-size:0.72em; color:#fa6; margin-top:0.6em;">
+    Async serial: 5ms linger &times; 5000 sends = 25s of artificial delay alone.
+    Network round-trip adds the rest.
+  </p>
+</section>
+
+<!-- Slide 9: What Would Need to Change -->
+<section>
+  <h2>What Would Need to Change</h2>
+
+  <p style="font-size:0.72em; color:#aaa; margin-bottom:0.5em;">
+    To decouple the send from the ack wait, we need a fire-and-forget send path.
+  </p>
+
+  <div style="background:#111; border:1px solid #333; border-radius:6px; padding:0.8em; font-family: var(--mono); font-size:0.7em; margin-bottom:0.6em;">
+    <div style="color:#888; margin-bottom:0.4em;">Current:</div>
+    <div style="white-space:nowrap; color:#ccc;">
+      send(msg)
+      <span style="color:#555;"> → </span>
+      <span style="color:#ff8060;">await(ack)</span>
+      <span style="color:#555;"> → </span>
+      <span style="color:#8cf;">[have txId]</span>
+      <span style="color:#555;"> → </span>
+      <span style="color:#a8f;">await(indexer)</span>
+    </div>
+  </div>
+
+  <div class="fragment" style="background:#111; border:1px solid #4af; border-radius:6px; padding:0.8em; font-family: var(--mono); font-size:0.7em;">
+    <div style="color:#6af; margin-bottom:0.4em;">Proposed:</div>
+    <div style="white-space:nowrap; color:#ccc;">
+      send(msg, <span style="color:#fa6;">correlationId</span>)
+      <span style="color:#555;"> → </span>
+      <span style="color:#6f6;">return immediately</span>
+      <span style="color:#555;"> → </span>
+      <span style="color:#555;">... later ...</span>
+      <span style="color:#555;"> → </span>
+      <span style="color:#a8f;">await(indexer, <span style="color:#fa6;">correlationId</span>)</span>
+    </div>
+  </div>
+
+  <div class="fragment" style="margin-top:0.8em; padding:0.5em 0.8em; background:#2a2000; border:1px solid #f84; border-radius:4px; font-size:0.7em; color:#fa6;">
+    Problem: txId IS the Kafka offset.<br>
+    We don't know it until the broker acks.<br>
+    Need a correlation mechanism that maps correlationId &rarr; txId after ack.
+  </div>
+
+  <p class="fragment" style="font-size:0.67em; color:#888; margin-top:0.5em;">
+    This requires changes to the Log interface and the indexer subscription model.
+  </p>
+</section>
+
+<!-- Slide 10: Recommendation -->
+<section>
+  <h2>Recommendation</h2>
+
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:1em; margin-top:0.6em;">
+    <div style="background:#1a1a1a; border:1px solid #334; border-radius:6px; padding:0.9em;">
+      <div style="color:#6f6; font-size:0.75em; margin-bottom:0.5em; font-weight:bold;">Do now</div>
+      <ul style="font-size:0.7em; color:#ccc; margin:0; padding-left:1.2em; line-height:1.8;">
+        <li><code style="color:#8cf;">linger.ms=0</code> is correct for current architecture</li>
+        <li>Concurrent connections already batch naturally at the producer</li>
+        <li>No regression for multi-connection workloads</li>
+      </ul>
+    </div>
+    <div style="background:#1a1a1a; border:1px solid #334; border-radius:6px; padding:0.9em;">
+      <div style="color:#fa6; font-size:0.75em; margin-bottom:0.5em; font-weight:bold;">To revisit later</div>
+      <ul style="font-size:0.7em; color:#ccc; margin:0; padding-left:1.2em; line-height:1.8;">
+        <li>Correlation IDs to decouple send from await</li>
+        <li>Changes to Log interface</li>
+        <li>Fire-and-forget in appendMessage</li>
+        <li>Then linger.ms=5 would help single-connection throughput</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="fragment" style="margin-top:1em; padding:0.6em 0.9em; background:#1a2a3a; border:1px solid #4af; border-radius:4px; font-size:0.72em; color:#8cf; text-align:left;">
+    TL;DR: The batching benefit of linger.ms requires concurrent senders.
+    With serial commits and a blocking send-await loop, linger only adds latency.
+  </div>
+</section>
+
+</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
+<script>
+  Reveal.initialize({
+    hash: true,
+    controls: true,
+    progress: true,
+    center: true,
+    transition: 'fade',
+    backgroundTransition: 'fade',
+  });
+</script>
+</body>
+</html>

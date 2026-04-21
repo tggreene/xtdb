@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tx Lifecycle Walkthrough</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reset.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/theme/black.css">
+<style>
+  :root {
+    --mono: 'Fira Mono', 'Cascadia Code', Consolas, monospace;
+    --accent: #6af;
+    --b1: #f66;
+    --b2: #a6f;
+    --dim: #2a3240;
+    --dim-border: #3a4a5a;
+  }
+
+  .reveal { font-family: var(--mono); }
+  .reveal h1, .reveal h2, .reveal h3 {
+    font-family: var(--mono);
+    text-transform: none;
+    letter-spacing: -0.02em;
+  }
+  .reveal h2 {
+    font-size: 0.9em;
+    color: #adf;
+    text-align: left;
+    margin: 0 0 0.4em 0;
+  }
+  .reveal section { text-align: left; padding: 0.5em 1em; }
+  .reveal pre { box-shadow: none; }
+
+  .step-counter {
+    position: absolute;
+    top: 0.5em;
+    right: 1em;
+    color: #555;
+    font-size: 0.6em;
+  }
+
+  .layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+    gap: 0.8em;
+    align-items: start;
+  }
+
+  /* Diagram grid */
+  .diagram {
+    position: relative;
+    padding: 0.3em;
+    font-size: 0.45em;
+    overflow: hidden;
+  }
+  .diagram .row {
+    display: flex;
+    align-items: center;
+    gap: 0.4em;
+    margin: 0.25em 0;
+    flex-wrap: wrap;
+  }
+  .box {
+    background: var(--dim);
+    border: 1px solid var(--dim-border);
+    color: #567;
+    padding: 0.35em 0.6em;
+    border-radius: 4px;
+    white-space: nowrap;
+    transition: all 0.3s;
+    font-family: var(--mono);
+    font-size: 1em;
+  }
+  .box.on {
+    background: #1e3a5f;
+    border-color: var(--accent);
+    color: #cdf;
+    box-shadow: 0 0 12px rgba(100,170,255,0.5);
+  }
+  .box.blocking {
+    background: #3a1515;
+    border-color: var(--b1);
+    color: #f99;
+    box-shadow: 0 0 12px rgba(255,102,102,0.5);
+  }
+  .box.waiting {
+    background: #2a1a3a;
+    border-color: var(--b2);
+    color: #caf;
+    box-shadow: 0 0 12px rgba(170,102,255,0.5);
+  }
+  .box.done {
+    background: #1a3a1a;
+    border-color: #6c6;
+    color: #9f9;
+  }
+  .arrow {
+    color: #334;
+    transition: all 0.3s;
+    font-size: 1.2em;
+  }
+  .arrow.on { color: var(--accent); font-weight: bold; }
+  .arrow.blocking { color: var(--b1); font-weight: bold; }
+  .arrow.waiting { color: var(--b2); font-weight: bold; }
+
+  .thread-label {
+    color: #567;
+    font-size: 0.85em;
+    font-style: italic;
+    margin: 0.8em 0 0.3em 0;
+    transition: color 0.3s;
+  }
+  .thread-label.on { color: var(--accent); }
+  .thread-label.blocking { color: var(--b1); }
+  .thread-label.waiting { color: var(--b2); }
+
+  .thread-group {
+    border-left: 2px solid transparent;
+    padding-left: 0.5em;
+    margin: 0.3em 0;
+    transition: border-color 0.3s;
+  }
+  .thread-group.active { border-left-color: var(--accent); }
+  .thread-group.blocking { border-left-color: var(--b1); }
+  .thread-group.waiting { border-left-color: var(--b2); }
+
+  /* Code panel */
+  .code-panel {
+    background: #0d1117;
+    border: 1px solid #334;
+    border-radius: 6px;
+    padding: 0.8em 1em;
+    min-height: 350px;
+    font-size: 0.55em;
+    overflow: auto;
+  }
+  .code-panel .filename {
+    color: var(--accent);
+    font-size: 0.95em;
+    margin-bottom: 0.5em;
+    padding-bottom: 0.3em;
+    border-bottom: 1px solid #334;
+  }
+  .code-panel pre {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    color: #ccc;
+    text-align: left;
+    font-size: 1em;
+    line-height: 1.5;
+  }
+  .code-panel .hl { background: rgba(100,170,255,0.15); display: block; padding: 0 0.3em; margin: 0 -0.3em; }
+  .code-panel .hl-red { background: rgba(255,102,102,0.18); display: block; padding: 0 0.3em; margin: 0 -0.3em; }
+  .code-panel .hl-purple { background: rgba(170,102,255,0.18); display: block; padding: 0 0.3em; margin: 0 -0.3em; }
+  .code-panel .comment { color: #6a8; }
+  .code-panel .kw { color: #c8f; }
+  .code-panel .str { color: #8c8; }
+  .code-panel .sym { color: #8cf; }
+
+  /* Narrative */
+  .narrative {
+    grid-column: 1 / -1;
+    background: rgba(100,170,255,0.08);
+    border-left: 3px solid var(--accent);
+    padding: 0.6em 1em;
+    margin-top: 0.8em;
+    font-size: 0.6em;
+    color: #cdf;
+    min-height: 3em;
+    transition: all 0.3s;
+  }
+  .narrative.blocking {
+    background: rgba(255,102,102,0.08);
+    border-left-color: var(--b1);
+    color: #fcc;
+  }
+  .narrative.waiting {
+    background: rgba(170,102,255,0.08);
+    border-left-color: var(--b2);
+    color: #dcf;
+  }
+
+  /* Hidden driver elements (reveal.js fragments that don't need to show) */
+  .fragment.driver { visibility: hidden; height: 0; width: 0; margin: 0; padding: 0; position: absolute; }
+
+  /* Title slide */
+  .title-section {
+    text-align: center;
+    padding-top: 20vh;
+  }
+  .title-section h1 {
+    font-size: 1.8em;
+    color: var(--accent);
+  }
+</style>
+</head>
+<body>
+<div class="reveal">
+<div class="slides">
+
+<!-- Title -->
+<section class="title-section">
+  <h1>Transaction lifecycle<br/>— walkthrough</h1>
+  <p style="color:#888; font-size:0.7em; margin-top: 1em;">press → to advance, ← to go back</p>
+  <p style="color:#666; font-size:0.55em; margin-top: 0.5em;">sync mode, one INSERT, end-to-end</p>
+</section>
+
+<!-- Main walkthrough slide -->
+<section>
+  <span class="step-counter" id="step-counter">step 0 / 11</span>
+
+  <div class="layout">
+
+    <!-- LEFT: Diagram -->
+    <div class="diagram" id="diagram">
+
+      <!-- Client -->
+      <div class="row">
+        <div class="box" data-box="client">Client (psql/JDBC)</div>
+      </div>
+
+      <!-- pgwire thread group -->
+      <div class="thread-group" data-group="pgwire">
+        <div class="thread-label" data-label="pgwire">pgwire connection thread</div>
+        <div class="row">
+          <div class="box" data-box="pgwire">pgwire server</div>
+          <span class="arrow" data-arrow="pg-dml">→</span>
+          <div class="box" data-box="dml-buf">dml-buf</div>
+        </div>
+        <div class="row">
+          <div class="box" data-box="cmd-commit">cmd-commit</div>
+          <span class="arrow" data-arrow="cmd-submit">→</span>
+          <div class="box" data-box="submit">submitTxBlocking</div>
+        </div>
+        <div class="row">
+          <div class="box" data-box="append">appendMessageBlocking</div>
+          <span class="arrow" data-arrow="append-send">→</span>
+          <div class="box" data-box="send">producer.send</div>
+        </div>
+        <div class="row">
+          <div class="box" data-box="await-tx">awaitTxBlocking</div>
+        </div>
+      </div>
+
+      <!-- Producer IO thread -->
+      <div class="thread-group" data-group="producer">
+        <div class="thread-label" data-label="producer">producer I/O thread</div>
+        <div class="row">
+          <div class="box" data-box="producer-buf">buffer + linger</div>
+          <span class="arrow" data-arrow="prod-broker">→</span>
+          <div class="box" data-box="broker">Kafka broker</div>
+          <span class="arrow" data-arrow="broker-ack">←</span>
+          <div class="box" data-box="callback">callback<br/>complete Deferred</div>
+        </div>
+      </div>
+
+      <!-- Log processor thread -->
+      <div class="thread-group" data-group="log-proc">
+        <div class="thread-label" data-label="log-proc">log processor thread</div>
+        <div class="row">
+          <div class="box" data-box="poll">poll Kafka</div>
+          <span class="arrow" data-arrow="poll-idx">→</span>
+          <div class="box" data-box="indexer">indexer</div>
+          <span class="arrow" data-arrow="idx-li">→</span>
+          <div class="box" data-box="live-index">live index</div>
+        </div>
+        <div class="row">
+          <div class="box" data-box="watchers">watchers.notify</div>
+          <span class="arrow" data-arrow="notify-wake">⇢</span>
+          <div class="box" data-box="pgwire-wake" style="color:#567;">pgwire thread<br/>unblocks</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: Code panel -->
+    <div class="code-panel" id="code-panel">
+      <div class="filename" id="code-file">press → to start</div>
+      <pre id="code-body"></pre>
+    </div>
+
+    <!-- BOTTOM: Narrative -->
+    <div class="narrative" id="narrative">
+      Press → to walk through a transaction from client to response.
+    </div>
+
+  </div>
+
+  <!-- Invisible fragments that drive the animation -->
+  <span class="fragment driver" data-step="1"></span>
+  <span class="fragment driver" data-step="2"></span>
+  <span class="fragment driver" data-step="3"></span>
+  <span class="fragment driver" data-step="4"></span>
+  <span class="fragment driver" data-step="5"></span>
+  <span class="fragment driver" data-step="6"></span>
+  <span class="fragment driver" data-step="7"></span>
+  <span class="fragment driver" data-step="8"></span>
+  <span class="fragment driver" data-step="9"></span>
+  <span class="fragment driver" data-step="10"></span>
+  <span class="fragment driver" data-step="11"></span>
+</section>
+
+<!-- Recap -->
+<section>
+  <h2>recap</h2>
+  <ul style="font-size: 0.7em; line-height: 1.8;">
+    <li>One pgwire thread handles the connection end-to-end</li>
+    <li><span style="color:#f66;">B1 (red)</span> — producer.send + await ack on pgwire thread</li>
+    <li>Producer I/O thread batches, sends, gets ack, fires callback</li>
+    <li><span style="color:#a6f;">B2 (purple)</span> — awaitTxBlocking on pgwire thread</li>
+    <li>Log processor thread polls Kafka, runs indexer, notifies watchers</li>
+    <li>Everything coordinates via <code>CompletableDeferred</code> and <code>Watchers</code></li>
+  </ul>
+</section>
+
+</div>
+</div>
+
+<script>
+  const STEPS = [
+    null, // step 0 — nothing
+    { // 1
+      state: 'normal',
+      boxes: { client: 'on', pgwire: 'on' },
+      arrows: {},
+      groups: { pgwire: 'active' },
+      labels: { pgwire: 'on' },
+      file: 'pgwire.clj',
+      code:
+`<span class="comment">; Client sends over TCP:</span>
+<span class="comment">;   INSERT INTO users VALUES (1, 'alice')</span>
+
+<span class="comment">; pgwire parses the SQL message,</span>
+<span class="comment">; parks on the connection's dedicated thread</span>`,
+      narrative: "1. Client sends the SQL over the pgwire protocol. XTDB has one thread per connection; it parses the frame."
+    },
+    { // 2
+      state: 'normal',
+      boxes: { pgwire: 'on', 'dml-buf': 'on' },
+      arrows: { 'pg-dml': 'on' },
+      groups: { pgwire: 'active' },
+      labels: { pgwire: 'on' },
+      file: 'pgwire.clj:1320',
+      code:
+`<span class="kw">(when-not</span> (<span class="sym">:transaction</span> <span class="sym">@conn-state</span>)
+  (<span class="sym">cmd-begin</span> conn {<span class="sym">:implicit?</span> <span class="kw">true</span>
+                    <span class="sym">:access-mode</span> <span class="sym">:read-write</span>} {}))
+
+<span class="kw">(swap!</span> conn-state <span class="sym">update-in</span>
+       [<span class="sym">:transaction</span> <span class="sym">:dml-buf</span>]
+       (<span class="sym">fnil conj</span> [])
+       (<span class="sym">Sql.</span> query args))`,
+      narrative: "2. The statement becomes an op in the per-connection dml-buf. No I/O yet — everything is in-memory on conn-state. pgwire immediately responds 'OK' to the client."
+    },
+    { // 3
+      state: 'normal',
+      boxes: { 'cmd-commit': 'on', 'dml-buf': 'on' },
+      arrows: {},
+      groups: { pgwire: 'active' },
+      labels: { pgwire: 'on' },
+      file: 'pgwire.clj:559',
+      code:
+`(<span class="kw">defn</span> <span class="sym">cmd-commit</span> [conn]
+  (<span class="kw">let</span> [{<span class="sym">:keys</span> [dml-buf async?]} transaction]
+    <span class="comment">; sync mode (default): async? = false</span>
+    (<span class="kw">if</span> async?
+      (<span class="sym">.submitTx</span> node default-db tx-ops tx-opts)
+      (<span class="sym">.executeTx</span> node default-db tx-ops tx-opts))))`,
+      narrative: "3. Auto-commit (or explicit COMMIT) triggers cmd-commit. It pulls dml-buf, opens the ops as Arrow buffers, and calls executeTx (sync mode)."
+    },
+    { // 4 — enter B1
+      state: 'blocking',
+      boxes: { 'submit': 'blocking', 'append': 'blocking', 'send': 'blocking' },
+      arrows: { 'cmd-submit': 'blocking', 'append-send': 'blocking' },
+      groups: { pgwire: 'blocking' },
+      labels: { pgwire: 'blocking' },
+      block: 'B1',
+      file: 'Database.kt:113 → KafkaCluster.kt:205',
+      code:
+`<span class="kw">fun</span> <span class="sym">submitTxBlocking</span>(ops: List&lt;TxOp&gt;) =
+  sourceLog.<span class="sym">appendMessageBlocking</span>(txMsg)
+
+<span class="hl-red"><span class="kw">override suspend fun</span> <span class="sym">appendMessage</span>(msg) =
+  <span class="sym">CompletableDeferred</span>&lt;MessageMetadata&gt;()
+    .also { res ->
+      producer.<span class="sym">send</span>(ProducerRecord(topic, msg)) {
+        meta, e -> res.<span class="sym">complete</span>(meta)
+      }
+    }
+    .<span class="sym">await</span>()   <span class="comment">// ⬛ PARKED HERE</span></span>`,
+      narrative: "4. B1 begins. The pgwire thread calls producer.send (non-blocking), then parks on the Deferred via runBlocking { await() }. Meanwhile, control passes to the producer's I/O thread."
+    },
+    { // 5 — producer IO works
+      state: 'blocking',
+      boxes: { 'producer-buf': 'blocking', broker: 'on' },
+      arrows: { 'prod-broker': 'blocking' },
+      groups: { pgwire: 'blocking', producer: 'active' },
+      labels: { pgwire: 'blocking', producer: 'on' },
+      block: 'B1',
+      file: 'Kafka producer (internal)',
+      code:
+`<span class="comment">// producer's I/O thread wakes up</span>
+<span class="comment">// reads buffered records</span>
+<span class="comment">// if linger.ms &gt; 0: waits for more records</span>
+<span class="comment">// then sends as a batch:</span>
+
+<span class="sym">send</span>(batch, <span class="str">acks=all</span>)
+  → network round-trip to broker leader
+  → leader replicates to in-sync replicas
+  → leader returns offset = N
+  ← broker ack(offset=N)
+
+<span class="comment">// the pgwire thread is STILL parked on .await()</span>`,
+      narrative: "5. The producer's I/O thread handles the network. Sends (possibly batched) to the broker. Broker replicates (acks=all) and assigns offset N. Pgwire thread is still parked."
+    },
+    { // 6 — callback, B1 ends
+      state: 'normal',
+      boxes: { callback: 'on', submit: 'done', append: 'done' },
+      arrows: { 'broker-ack': 'on' },
+      groups: { pgwire: 'active', producer: 'active' },
+      labels: { pgwire: 'on', producer: 'on' },
+      file: 'KafkaCluster.kt:210',
+      code:
+`<span class="comment">// producer I/O thread fires the send callback:</span>
+producer.<span class="sym">send</span>(record) { meta, e ->
+  <span class="kw">if</span> (e == <span class="kw">null</span>) {
+    val metadata = <span class="sym">Log.MessageMetadata</span>(
+      epoch, meta.<span class="sym">offset</span>(), meta.<span class="sym">timestamp</span>()
+    )
+    res.<span class="sym">complete</span>(metadata)   <span class="comment">// ⬛ UNBLOCKS pgwire</span>
+  }
+}
+
+<span class="comment">// pgwire thread now has txId = N</span>`,
+      narrative: "6. Broker acked. Producer callback fires on the I/O thread, completing the Deferred. Pgwire thread unblocks with txId = N. B1 is done."
+    },
+    { // 7 — enter B2
+      state: 'waiting',
+      boxes: { 'await-tx': 'waiting' },
+      arrows: {},
+      groups: { pgwire: 'waiting' },
+      labels: { pgwire: 'waiting' },
+      block: 'B2',
+      file: 'impl.clj:71 → Database.kt:89',
+      code:
+`<span class="kw">(defn-</span> <span class="sym">await-msg-result</span> [node db msg-id]
+  (<span class="kw">when-let</span> [tx-res (<span class="sym">.awaitTxBlocking</span> db msg-id <span class="kw">nil</span>)]
+    (<span class="sym">tx-result->map</span> tx-res)))
+
+<span class="hl-purple"><span class="kw">fun</span> <span class="sym">awaitTxBlocking</span>(txId: Long, timeout: Duration?) =
+  <span class="sym">runBlocking</span> {
+    watchers.<span class="sym">awaitTx</span>(txId)   <span class="comment">// ⬛ PARKED HERE</span>
+  }</span>`,
+      narrative: "7. B2 begins. Pgwire thread parks again — this time waiting for the indexer to signal that this specific txId has been processed."
+    },
+    { // 8 — log processor
+      state: 'waiting',
+      boxes: { poll: 'on', broker: 'on' },
+      arrows: {},
+      groups: { pgwire: 'waiting', 'log-proc': 'active' },
+      labels: { pgwire: 'waiting', 'log-proc': 'on' },
+      block: 'B2',
+      file: 'KafkaCluster.kt (consumer loop)',
+      code:
+`<span class="comment">// log processor runs on its own thread,</span>
+<span class="comment">// continuously polling Kafka</span>
+
+<span class="kw">override suspend fun</span> <span class="sym">tailAll</span>(afterMsgId, processor) {
+  consumer.<span class="sym">assign</span>(listOf(topicPartition))
+  consumer.<span class="sym">seek</span>(topicPartition, lastOffset + 1)
+
+  <span class="kw">while</span> (isActive) {
+    <span class="kw">val</span> records = consumer.<span class="sym">poll</span>(pollDuration)
+    <span class="kw">if</span> (records.<span class="sym">isNotEmpty</span>())
+      processor.<span class="sym">processRecords</span>(records)
+  }
+}`,
+      narrative: "8. Meanwhile, on a totally different thread, the log processor polls Kafka. It sees record at offset N. Pgwire is still parked."
+    },
+    { // 9 — indexer runs
+      state: 'waiting',
+      boxes: { indexer: 'on', 'live-index': 'on' },
+      arrows: { 'poll-idx': 'on', 'idx-li': 'on' },
+      groups: { pgwire: 'waiting', 'log-proc': 'active' },
+      labels: { pgwire: 'waiting', 'log-proc': 'on' },
+      block: 'B2',
+      file: 'indexer (SourceLogProcessor.kt)',
+      code:
+`<span class="comment">// for each Tx record:</span>
+
+<span class="kw">when</span> (msg) {
+  <span class="kw">is</span> SourceMessage.Tx -> {
+    <span class="kw">val</span> ops = <span class="sym">decodeTxOps</span>(msg.txOps)     <span class="comment">// Arrow bytes</span>
+
+    <span class="kw">try</span> {
+      indexer.<span class="sym">runTx</span>(txId, ops)           <span class="comment">// DML, ASSERT, etc.</span>
+      liveIndex.<span class="sym">write</span>(...)
+      watchers.<span class="sym">notifyCommitted</span>(txId, systemTime)
+    } <span class="kw">catch</span> (e: AssertError) {
+      watchers.<span class="sym">notifyAborted</span>(txId, e)
+    }
+  }
+}`,
+      narrative: "9. Indexer decodes the Arrow bytes, runs the DML, writes to the live index (in-memory trie). If something fails (constraint, ASSERT), it records an aborted result."
+    },
+    { // 10 — notify, B2 ends
+      state: 'normal',
+      boxes: { watchers: 'on', 'pgwire-wake': 'done', 'await-tx': 'done' },
+      arrows: { 'notify-wake': 'on' },
+      groups: { pgwire: 'active', 'log-proc': 'active' },
+      labels: { pgwire: 'on', 'log-proc': 'on' },
+      file: 'Watchers (indexer-side)',
+      code:
+`<span class="comment">// log processor thread:</span>
+watchers.<span class="sym">notifyCommitted</span>(txId=N, systemTime)
+
+<span class="comment">// on the pgwire thread, the parked coroutine resumes:</span>
+<span class="sym">watchers.awaitTx</span>(N) → returns TransactionResult.<span class="sym">Committed</span>(...)
+
+<span class="comment">// pgwire's awaitTxBlocking unblocks</span>
+<span class="comment">// ⬛ B2 DONE — pgwire thread has the result</span>`,
+      narrative: "10. Watchers is the rendezvous point. notifyCommitted wakes the parked pgwire coroutine. Pgwire thread resumes with a TransactionResult. B2 is done."
+    },
+    { // 11 — response
+      state: 'normal',
+      boxes: { client: 'on', pgwire: 'on' },
+      arrows: {},
+      groups: { pgwire: 'active' },
+      labels: { pgwire: 'on' },
+      file: 'pgwire.clj (back in cmd-commit)',
+      code:
+`<span class="kw">(when-let</span> [error (<span class="sym">.getError</span> tx)]
+  (<span class="kw">throw</span> error))   <span class="comment">; surfaces synchronously to client</span>
+
+<span class="comment">; otherwise: CommandComplete + ReadyForQuery</span>
+(<span class="sym">pgio/cmd-send-ready</span> conn)`,
+      narrative: "11. Back on pgwire. If the tx was aborted, the error is thrown and sent to the client. Otherwise, CommandComplete + ReadyForQuery, and the client is unblocked."
+    },
+  ];
+
+  function applyStep(step) {
+    // Reset everything
+    document.querySelectorAll('.box').forEach(b => b.classList.remove('on', 'blocking', 'waiting', 'done'));
+    document.querySelectorAll('.arrow').forEach(a => a.classList.remove('on', 'blocking', 'waiting'));
+    document.querySelectorAll('.thread-label').forEach(l => l.classList.remove('on', 'blocking', 'waiting'));
+    document.querySelectorAll('.thread-group').forEach(g => g.classList.remove('active', 'blocking', 'waiting'));
+
+    document.getElementById('step-counter').textContent = step === null ? '' : `step ${STEPS.indexOf(step)} / 11`;
+
+    if (!step) {
+      document.getElementById('code-file').textContent = 'press → to start';
+      document.getElementById('code-body').innerHTML = '';
+      document.getElementById('narrative').textContent = 'Press → to walk through a transaction from client to response.';
+      document.getElementById('narrative').className = 'narrative';
+      return;
+    }
+
+    // Apply box states
+    for (const [name, state] of Object.entries(step.boxes || {})) {
+      const el = document.querySelector(`[data-box="${name}"]`);
+      if (el) el.classList.add(state);
+    }
+    // Apply arrow states
+    for (const [name, state] of Object.entries(step.arrows || {})) {
+      const el = document.querySelector(`[data-arrow="${name}"]`);
+      if (el) el.classList.add(state);
+    }
+    // Apply label states
+    for (const [name, state] of Object.entries(step.labels || {})) {
+      const el = document.querySelector(`[data-label="${name}"]`);
+      if (el) el.classList.add(state);
+    }
+    // Apply group states
+    for (const [name, state] of Object.entries(step.groups || {})) {
+      const el = document.querySelector(`[data-group="${name}"]`);
+      if (el) el.classList.add(state);
+    }
+
+    // Code + narrative
+    document.getElementById('code-file').textContent = step.file;
+    document.getElementById('code-body').innerHTML = step.code;
+    const narr = document.getElementById('narrative');
+    narr.textContent = step.narrative;
+    narr.className = 'narrative ' + (step.state === 'blocking' ? 'blocking' : step.state === 'waiting' ? 'waiting' : '');
+  }
+
+  // Initial state
+  applyStep(null);
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
+<script>
+  Reveal.initialize({
+    hash: true,
+    controls: true,
+    progress: true,
+    transition: 'none',
+    backgroundTransition: 'none',
+    width: 1600,
+    height: 1000,
+    margin: 0.04,
+  });
+
+  // React to fragment changes
+  Reveal.on('fragmentshown', (e) => {
+    const step = parseInt(e.fragment.dataset.step);
+    if (!isNaN(step)) applyStep(STEPS[step]);
+  });
+  Reveal.on('fragmenthidden', (e) => {
+    // Figure out the previous step that's still shown
+    const shown = Array.from(document.querySelectorAll('.fragment.visible'))
+      .map(f => parseInt(f.dataset.step))
+      .filter(n => !isNaN(n));
+    const maxShown = shown.length ? Math.max(...shown) : 0;
+    applyStep(STEPS[maxShown]);
+  });
+  Reveal.on('slidechanged', (e) => {
+    // Reset on slide change
+    if (e.indexh === 1) applyStep(STEPS[0]);
+  });
+</script>
+</body>
+</html>

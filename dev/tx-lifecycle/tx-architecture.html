@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>XTDB Architecture — Write Path</title>
+<style>
+  body {
+    background: #0e1116;
+    color: #e6edf3;
+    font-family: 'Fira Mono', 'Cascadia Code', Consolas, monospace;
+    margin: 0;
+    padding: 2em;
+  }
+  h1 { font-weight: 500; margin: 0 0 0.3em 0; font-size: 1.3em; color: #adf; }
+  h2 { font-weight: 500; margin: 1.5em 0 0.5em 0; font-size: 1em; color: #8cf; border-bottom: 1px solid #334; padding-bottom: 0.2em; }
+  .hint { color: #888; font-size: 0.85em; margin-bottom: 1em; }
+  .diagram {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 1.5em;
+    overflow-x: auto;
+  }
+  .legend {
+    font-size: 0.8em;
+    color: #aaa;
+    margin-top: 1em;
+    line-height: 1.7;
+  }
+  .legend .swatch {
+    display: inline-block;
+    width: 1em;
+    height: 0.8em;
+    margin-right: 0.4em;
+    vertical-align: middle;
+    border-radius: 2px;
+  }
+</style>
+</head>
+<body>
+  <h1>XTDB architecture — write path</h1>
+  <div class="hint">Boxes = components. Arrows = data flow. Red edges = blocking calls on the pgwire thread.</div>
+
+  <h2>High-level</h2>
+  <div class="diagram">
+<pre class="mermaid">
+flowchart LR
+    Client(["Client<br/>JDBC / psql"]):::ext
+
+    subgraph Node["XTDB Node (one process)"]
+      direction TB
+      PG["pgwire server<br/>thread per conn"]:::comp
+      DML["dml-buf<br/>per-conn buffer"]:::buf
+      Prod["Kafka producer<br/>shared, one per node"]:::comp
+      LP["log processor<br/>consumer thread"]:::comp
+      Idx["indexer"]:::comp
+      LI[("live index<br/>in-memory tries")]:::data
+      W(["watchers<br/>coroutine rendezvous"]):::wait
+      BP["buffer pool"]:::comp
+    end
+
+    Kafka[("Kafka<br/>source-of-truth log")]:::log
+    Store[("Object Storage<br/>S3 / Azure / local")]:::storage
+
+    Client -->|SQL over pgwire| PG
+    PG -->|append ops| DML
+    DML -->|on COMMIT| Prod
+    Prod -->|send + await ack| Kafka
+    Kafka -->|poll| LP
+    LP --> Idx
+    Idx -->|write| LI
+    Idx -.->|notify txId| W
+    W -.->|wake pgwire thread| PG
+
+    LI -->|periodic flush| BP
+    BP --> Store
+
+    classDef ext fill:#1e2a3a,stroke:#4af,color:#cdf
+    classDef comp fill:#1e2a3a,stroke:#3a5a7a,color:#cdf
+    classDef buf fill:#1a2a1a,stroke:#4c4,color:#8f8
+    classDef log fill:#2a1e3a,stroke:#a4f,color:#d8f
+    classDef storage fill:#2a2a1e,stroke:#aa4,color:#ee8
+    classDef data fill:#111,stroke:#666,color:#ccc
+    classDef wait fill:#2a1515,stroke:#f66,color:#f88
+
+    linkStyle 3 stroke:#f66,stroke-width:3px
+    linkStyle 4 stroke:#f66,stroke-width:3px
+</pre>
+  </div>
+
+  <div class="legend">
+    <div><span class="swatch" style="background:#1e2a3a; border:1px solid #4af;"></span>External / client</div>
+    <div><span class="swatch" style="background:#1e2a3a; border:1px solid #3a5a7a;"></span>Component (code)</div>
+    <div><span class="swatch" style="background:#2a1e3a; border:1px solid #a4f;"></span>Log (Kafka)</div>
+    <div><span class="swatch" style="background:#2a2a1e; border:1px solid #aa4;"></span>Object storage</div>
+    <div><span class="swatch" style="background:#2a1515; border:1px solid #f66;"></span>Watchers (where threads park waiting for indexing)</div>
+    <div style="margin-top:0.4em;"><b style="color:#f66;">Thick red arrows</b> = the two blocking hops on the pgwire thread (send+ack, poll→notify)</div>
+    <div><b style="color:#aaa;">Dashed arrows</b> = notifications (no data, just signals)</div>
+  </div>
+
+  <h2>What blocks on which thread</h2>
+  <div class="diagram">
+<pre class="mermaid">
+flowchart TB
+    subgraph PgwireThread["pgwire connection thread"]
+      direction TB
+      A1["cmd-commit"] --> A2["producer.send"]
+      A2 -.->|returns immediately| A3["await Deferred"]
+      A3 --> A4["awaitTxBlocking txId"]
+      A4 --> A5["send response"]
+    end
+
+    subgraph ProducerThread["Kafka producer I/O thread"]
+      direction TB
+      B1["read from buffer"] --> B2["wait linger.ms"]
+      B2 --> B3["batch send to broker"]
+      B3 --> B4["receive ack"]
+      B4 --> B5["fire callback<br/>complete Deferred"]
+    end
+
+    subgraph ConsumerThread["log processor thread"]
+      direction TB
+      C1["poll Kafka"] --> C2["for each record"]
+      C2 --> C3["indexer runs tx"]
+      C3 --> C4["write live index"]
+      C4 --> C5["watchers.notify txId"]
+    end
+
+    A2 -.->|queues record| B1
+    B5 -.->|unblocks A3| A3
+    C5 -.->|unblocks A4| A4
+
+    style A3 fill:#2a1515,stroke:#f66,color:#f88
+    style A4 fill:#2a1e3a,stroke:#a4f,color:#d8f
+    style B2 fill:#2a2000,stroke:#f84,color:#fa6
+</pre>
+  </div>
+
+  <div class="legend">
+    Each column is a thread. Arrows within a column = sequential within that thread. Dashed cross-column arrows = one thread signalling another (via Deferred, watcher).<br/>
+    <span style="color:#f88;">Red box</span> = B1 blocking wait (Kafka ack). <span style="color:#d8f;">Purple box</span> = B2 blocking wait (indexer). <span style="color:#fa6;">Orange box</span> = the linger.ms delay.
+  </div>
+
+  <h2>What Kafka actually holds</h2>
+  <div class="diagram">
+<pre class="mermaid">
+flowchart LR
+    subgraph Log["Kafka topic (single partition)"]
+      direction LR
+      T0["offset 0<br/>Tx"]
+      T1["offset 1<br/>Tx"]
+      T2["offset 2<br/>FlushBlock"]
+      T3["offset 3<br/>Tx"]
+      T4["offset 4<br/>TriesAdded"]
+      T5["offset 5<br/>BlockUploaded"]
+      T6["offset 6<br/>Tx"]
+      T0 --> T1 --> T2 --> T3 --> T4 --> T5 --> T6
+    end
+
+    subgraph NodeA["Node A - writer"]
+      Acur["current msgId = 6"]
+    end
+
+    subgraph NodeB["Node B - replica, catching up"]
+      Bcur["current msgId = 4"]
+    end
+
+    Log -.->|consumes| NodeA
+    Log -.->|consumes| NodeB
+
+    classDef tx fill:#1e2a3a,stroke:#3a5a7a,color:#cdf
+    classDef meta fill:#2a2000,stroke:#f84,color:#fa6
+
+    class T0,T1,T3,T6 tx
+    class T2,T4,T5 meta
+</pre>
+  </div>
+
+  <div class="legend">
+    The log contains <b>two kinds of messages</b>: user transactions (<span style="color:#cdf;">blue</span>) and internal system messages (<span style="color:#fa6;">orange</span>: FlushBlock, TriesAdded, BlockUploaded, AttachDatabase, DetachDatabase).<br/>
+    Every node consumes the same log and derives the same state. That's the core guarantee.<br/>
+    A node's "position" is just its current offset. The msgId = <code>(epoch &lt;&lt; 48) | offset</code>.
+  </div>
+
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+      themeVariables: {
+        darkMode: true,
+        background: '#161b22',
+        fontFamily: 'Fira Mono, Cascadia Code, Consolas, monospace',
+        primaryColor: '#1f2937',
+        primaryTextColor: '#e6edf3',
+        primaryBorderColor: '#30363d',
+        lineColor: '#6af',
+      },
+      flowchart: {
+        curve: 'basis',
+        padding: 15,
+        nodeSpacing: 40,
+        rankSpacing: 60,
+      }
+    });
+  </script>
+</body>
+</html>

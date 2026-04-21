@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tx Lifecycle — Standalone</title>
+<style>
+  body {
+    background: #0e1116;
+    color: #e6edf3;
+    font-family: 'Fira Mono', 'Cascadia Code', Consolas, monospace;
+    margin: 0;
+    padding: 2em;
+  }
+  h1 { font-weight: 500; margin: 0 0 0.5em 0; font-size: 1.3em; color: #adf; }
+  .hint { color: #888; font-size: 0.85em; margin-bottom: 1.5em; }
+  .diagram {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 1.5em;
+    overflow-x: auto;
+  }
+</style>
+</head>
+<body>
+  <h1>XTDB transaction lifecycle — sync mode</h1>
+  <div class="hint">Self-contained. Open directly with <code>file://</code>. B1 (red) = Kafka ack wait. B2 (purple) = indexer wait.</div>
+
+  <div class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant Client
+    participant PG as pgwire thread
+    participant Prod as producer IO thread
+    participant Broker as Kafka broker
+    participant LP as log processor thread
+    participant Idx as indexer
+    participant LI as live index
+    participant W as watchers
+
+    Client->>+PG: INSERT INTO users VALUES
+    Note over PG: parse, append to dml-buf
+    PG-->>-Client: CommandComplete
+
+    Client->>+PG: Sync or auto-commit
+    Note over PG: cmd-commit (sync mode)
+
+    rect rgba(255,100,100,0.15)
+        Note over PG,Prod: B1 - Kafka ack wait
+        PG->>Prod: producer.send record
+        Prod->>Prod: buffer, wait linger.ms
+        Prod->>+Broker: produce batch
+        Broker->>Broker: replicate (acks=all)
+        Broker-->>-Prod: ack offset=N
+        Prod-->>PG: callback completes Deferred
+    end
+    Note over PG: now have txId = N
+
+    rect rgba(160,100,255,0.15)
+        Note over PG,W: B2 - indexer wait
+        PG->>W: awaitTxBlocking N
+
+        par log processor (independent thread)
+            Broker-->>LP: poll returns record N
+            LP->>+Idx: process tx N
+            Idx->>Idx: decode Arrow, run DML
+            Idx->>LI: write to live index
+            Idx->>W: notifyCommitted N
+            Idx-->>-LP: done
+        end
+
+        W-->>PG: TransactionResult
+    end
+
+    PG-->>-Client: CommandComplete / ReadyForQuery
+</pre>
+  </div>
+
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+      themeVariables: {
+        darkMode: true,
+        background: '#161b22',
+        primaryColor: '#1f2937',
+        primaryTextColor: '#e6edf3',
+        primaryBorderColor: '#30363d',
+        lineColor: '#4af',
+        actorBkg: '#1e2a3a',
+        actorBorder: '#4af',
+        actorTextColor: '#cdf',
+        signalColor: '#8cf',
+        signalTextColor: '#cdf',
+        noteBkgColor: '#2a2a1a',
+        noteBorderColor: '#aa8',
+        noteTextColor: '#eec',
+      },
+      sequence: {
+        actorMargin: 60,
+        width: 160,
+        boxMargin: 15,
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tx Lifecycle Quiz</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --panel: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #888;
+    --accent: #6af;
+    --correct: #4c4;
+    --wrong: #f66;
+    --warn: #fa6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Fira Mono', 'Cascadia Code', Consolas, monospace;
+    margin: 0;
+    padding: 2em;
+    max-width: 900px;
+    margin: 0 auto;
+  }
+  h1 {
+    color: var(--accent);
+    font-size: 1.3em;
+    font-weight: 500;
+    margin: 0 0 0.3em 0;
+  }
+  .sub { color: var(--muted); font-size: 0.85em; margin-bottom: 1.5em; }
+
+  .progress {
+    height: 6px;
+    background: #1a1a1a;
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: 1.5em;
+  }
+  .progress .bar {
+    height: 100%;
+    background: var(--accent);
+    width: 0;
+    transition: width 0.2s;
+  }
+
+  .question {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.5em;
+    margin-bottom: 1em;
+  }
+  .question .qnum {
+    color: var(--muted);
+    font-size: 0.8em;
+    margin-bottom: 0.4em;
+  }
+  .question .qtext {
+    font-size: 1em;
+    margin-bottom: 1em;
+    color: var(--text);
+    line-height: 1.5;
+  }
+  .question code {
+    background: #000;
+    padding: 0.1em 0.4em;
+    border-radius: 3px;
+    color: #cdf;
+    font-size: 0.9em;
+  }
+
+  .options {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4em;
+  }
+  .option {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.7em;
+    padding: 0.8em 1em;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    cursor: pointer;
+    background: #0e1116;
+    transition: background 0.1s, border-color 0.1s;
+    font-size: 0.88em;
+    color: #ccc;
+  }
+  .option:hover {
+    background: #1a2028;
+    border-color: #4a5a6a;
+  }
+  .option .letter {
+    color: var(--muted);
+    font-weight: bold;
+    min-width: 1.5em;
+  }
+  .option.correct {
+    background: #1a3a1a;
+    border-color: var(--correct);
+    color: #cfc;
+  }
+  .option.correct .letter { color: var(--correct); }
+  .option.wrong {
+    background: #3a1a1a;
+    border-color: var(--wrong);
+    color: #fcc;
+  }
+  .option.wrong .letter { color: var(--wrong); }
+  .option.disabled {
+    cursor: default;
+    pointer-events: none;
+  }
+
+  .explanation {
+    margin-top: 1em;
+    padding: 0.9em 1.1em;
+    background: #111;
+    border-left: 3px solid var(--accent);
+    border-radius: 4px;
+    font-size: 0.85em;
+    color: #bcd;
+    line-height: 1.6;
+    display: none;
+  }
+  .explanation.shown { display: block; }
+  .explanation strong { color: #8cf; }
+
+  .nav {
+    display: flex;
+    justify-content: space-between;
+    gap: 1em;
+    margin-top: 1em;
+  }
+  button {
+    background: var(--accent);
+    color: #000;
+    border: none;
+    padding: 0.7em 1.4em;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 0.9em;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+  button:hover { background: #8cf; }
+  button:disabled {
+    background: #333;
+    color: #777;
+    cursor: not-allowed;
+  }
+  button.ghost {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+  }
+  button.ghost:hover { background: #1a2028; color: var(--text); }
+
+  .result {
+    text-align: center;
+    padding: 3em 2em;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .result .score {
+    font-size: 3em;
+    color: var(--accent);
+    margin: 0.3em 0;
+  }
+  .result .verdict {
+    font-size: 1.1em;
+    color: var(--text);
+    margin-bottom: 1em;
+  }
+  .result .breakdown {
+    font-size: 0.85em;
+    color: var(--muted);
+    margin-bottom: 2em;
+  }
+
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+  <h1>XTDB tx lifecycle quiz</h1>
+  <div class="sub">Click an answer. You get immediate feedback. Try not to peek at the diagrams. 14 questions.</div>
+
+  <div class="progress"><div class="bar" id="progress-bar"></div></div>
+
+  <div id="questions"></div>
+
+  <div id="result" class="result hidden">
+    <div class="verdict" id="verdict"></div>
+    <div class="score" id="score"></div>
+    <div class="breakdown" id="breakdown"></div>
+    <button onclick="restart()">Restart</button>
+  </div>
+
+  <script>
+    const QUESTIONS = [
+      {
+        q: "What is the fundamental role of Kafka in XTDB?",
+        options: [
+          "A distributed query cache",
+          "The source-of-truth log for transactions — everything else is derived from it",
+          "Only used for replicating state between nodes; not load-bearing",
+          "An optional metrics / telemetry sink",
+        ],
+        correct: 1,
+        explain: "Kafka is the <strong>durable ordered log</strong>. Storage is a materialised view of the log; a fresh node can rebuild state by replaying it from offset 0."
+      },
+      {
+        q: "In <code>sync</code> mode, how many blocking points does the pgwire thread hit per COMMIT?",
+        options: ["0", "1", "2", "3"],
+        correct: 2,
+        explain: "<strong>B1</strong>: wait for Kafka ack (get the txId). <strong>B2</strong>: wait for the indexer to process the tx so errors can surface synchronously."
+      },
+      {
+        q: "What does <strong>B1</strong> wait for?",
+        options: [
+          "The indexer to process the transaction",
+          "The Kafka broker to acknowledge the message (so we know its offset)",
+          "The client to confirm receipt of the response",
+          "Storage to flush a block",
+        ],
+        correct: 1,
+        explain: "<code>appendMessageBlocking</code> parks the pgwire thread on <code>Deferred.await()</code> until the producer callback fires with the assigned offset."
+      },
+      {
+        q: "What does <strong>B2</strong> wait for?",
+        options: [
+          "The Kafka broker to ack",
+          "The indexer to process the tx and signal via watchers",
+          "The producer to flush its buffer",
+          "A block to be uploaded to object storage",
+        ],
+        correct: 1,
+        explain: "<code>awaitTxBlocking(txId)</code> parks the thread on <code>watchers.awaitTx(txId)</code> — resumes when the log processor has run the tx through the indexer and notified."
+      },
+      {
+        q: "In <code>async</code> mode, which blocking point is skipped?",
+        options: ["B1", "B2", "Both", "Neither"],
+        correct: 1,
+        explain: "<code>submitTx</code> still waits for the Kafka ack (B1) — we need the txId to return it. Only the indexer wait (B2) is skipped, so errors in DML aren't raised synchronously."
+      },
+      {
+        q: "What does <code>linger.ms=5</code> do?",
+        options: [
+          "Delays the COMMIT response to the client by 5ms",
+          "Makes the producer wait up to 5ms to accumulate more records into a batch before sending",
+          "Sets Kafka's replication timeout",
+          "Adds 5ms to the indexer polling interval",
+        ],
+        correct: 1,
+        explain: "It's a producer-side optimisation: hold records briefly to amortise network round-trips via batching. Default was 0 in Kafka 3.x, 5ms in Kafka 4.x."
+      },
+      {
+        q: "Why doesn't <code>linger.ms=5</code> help a single XTDB connection?",
+        options: [
+          "XTDB's producer ignores linger",
+          "The send-then-await pattern means only one message is ever in the producer buffer at a time",
+          "The Kafka cluster isn't configured for batching",
+          "It only applies to consumers",
+        ],
+        correct: 1,
+        explain: "Each COMMIT does <code>producer.send()</code> then blocks on the ack before returning. The next COMMIT can't start sending until the previous one's ack arrives. No overlap = no batching opportunity."
+      },
+      {
+        q: "A <code>msgId</code> (tx-id) is composed of:",
+        options: [
+          "System time + sequence number",
+          "Epoch (high 16 bits) + Kafka offset (low 48 bits), packed into a long",
+          "A random UUID",
+          "A SHA-256 hash of the transaction content",
+        ],
+        correct: 1,
+        explain: "See <code>MsgIdUtil.kt</code>. Epoch lets us detect log resets (e.g. Kafka topic replaced); offset is Kafka's assigned position within that epoch."
+      },
+      {
+        q: "Why is it awkward to decouple <code>send</code> from <code>await</code> to benefit from linger?",
+        options: [
+          "Kafka's producer API doesn't support it",
+          "The txId IS the Kafka offset — we only learn it from the broker's ack",
+          "The indexer won't process out-of-order records",
+          "The pgwire protocol mandates synchronous responses",
+        ],
+        correct: 1,
+        explain: "To proceed past <code>send</code> without waiting, we'd need a client-side correlation ID that the indexer can match against — decoupling 'I submitted a tx' from 'Kafka told me its offset'."
+      },
+      {
+        q: "The log processor runs on:",
+        options: [
+          "The pgwire connection thread",
+          "A dedicated consumer thread, independent of pgwire",
+          "A coroutine on the producer's I/O thread",
+          "A scheduled executor fired every 100ms",
+        ],
+        correct: 1,
+        explain: "It's a separate thread continuously polling Kafka and feeding records to the indexer. That's why B2 is a cross-thread wait — the pgwire thread parks, the log processor eventually notifies."
+      },
+      {
+        q: "The Kafka log contains:",
+        options: [
+          "Only user transactions",
+          "User txs plus internal system messages (FlushBlock, TriesAdded, BlockUploaded, AttachDatabase, etc.)",
+          "Only committed transactions — failures are filtered out",
+          "Only DML; DDL goes through a separate channel",
+        ],
+        correct: 1,
+        explain: "The log is the single ordered stream for everything that changes node state. System messages like <code>BlockUploaded</code> tell consumers that a block is now durable in storage."
+      },
+      {
+        q: "Storage is:",
+        options: [
+          "A second source of truth that must agree with Kafka",
+          "A materialised view derived deterministically from the log",
+          "A cache that can be rebuilt from the live index",
+          "Only consulted for queries, not writes",
+        ],
+        correct: 1,
+        explain: "If you lose storage, you can replay the log to rebuild it. If you lose the log (before flushing), you lose the in-flight data. Kafka is primary, storage is derived."
+      },
+      {
+        q: "Why is pgwire's <code>sync</code> mode the default?",
+        options: [
+          "Async mode is experimental and unstable",
+          "So errors raised during indexing (constraint failures, ASSERT) surface synchronously to the client",
+          "Async mode uses significantly more memory",
+          "Legacy compatibility only",
+        ],
+        correct: 1,
+        explain: "If a tx fails during indexing (e.g. <code>ASSERT 1 > 2</code>), the client needs to see the error right away. Async mode trades this for throughput — errors come back on the next interaction."
+      },
+      {
+        q: "After a node restart, how does it catch up to the current state?",
+        options: [
+          "Asks the previous writer to retransmit",
+          "Reads storage to find the last indexed msgId, then resumes consuming Kafka from that offset",
+          "Replays all of Kafka from offset 0 to rebuild the live index",
+          "Loads a snapshot file produced at shutdown",
+        ],
+        correct: 1,
+        explain: "Storage blocks carry their msgId coverage. Node reads the latest, then tails the log from there. No snapshot file — storage <em>is</em> the snapshot."
+      },
+    ];
+
+    let state = {
+      answered: new Array(QUESTIONS.length).fill(null), // null | correct-index-they-picked
+    };
+
+    function render() {
+      const container = document.getElementById('questions');
+      container.innerHTML = '';
+      QUESTIONS.forEach((q, i) => {
+        const answered = state.answered[i];
+        const qEl = document.createElement('div');
+        qEl.className = 'question';
+        qEl.innerHTML = `
+          <div class="qnum">Q${i + 1} / ${QUESTIONS.length}</div>
+          <div class="qtext">${q.q}</div>
+          <div class="options">
+            ${q.options.map((opt, idx) => {
+              let cls = 'option';
+              if (answered !== null) {
+                cls += ' disabled';
+                if (idx === q.correct) cls += ' correct';
+                else if (idx === answered) cls += ' wrong';
+              }
+              const letter = String.fromCharCode(65 + idx);
+              return `<div class="${cls}" data-q="${i}" data-opt="${idx}">
+                <span class="letter">${letter}.</span>
+                <span>${opt}</span>
+              </div>`;
+            }).join('')}
+          </div>
+          <div class="explanation ${answered !== null ? 'shown' : ''}">${q.explain}</div>
+        `;
+        container.appendChild(qEl);
+      });
+
+      // Wire up click handlers
+      container.querySelectorAll('.option:not(.disabled)').forEach(el => {
+        el.addEventListener('click', () => {
+          const qi = parseInt(el.dataset.q);
+          const oi = parseInt(el.dataset.opt);
+          state.answered[qi] = oi;
+          render();
+          updateProgress();
+          // Scroll the next unanswered question into view
+          const nextIdx = state.answered.findIndex(a => a === null);
+          if (nextIdx === -1) showResult();
+          else {
+            setTimeout(() => {
+              document.querySelectorAll('.question')[nextIdx]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }, 400);
+          }
+        });
+      });
+    }
+
+    function updateProgress() {
+      const answered = state.answered.filter(a => a !== null).length;
+      const pct = (answered / QUESTIONS.length) * 100;
+      document.getElementById('progress-bar').style.width = pct + '%';
+    }
+
+    function showResult() {
+      const correct = state.answered.filter((a, i) => a === QUESTIONS[i].correct).length;
+      const pct = Math.round((correct / QUESTIONS.length) * 100);
+      document.getElementById('score').textContent = pct + '%';
+      document.getElementById('breakdown').textContent = `${correct} of ${QUESTIONS.length} correct`;
+      const verdict =
+        pct >= 90 ? "You've got this wired." :
+        pct >= 75 ? "Solid grasp. A couple of edges to polish." :
+        pct >= 60 ? "Getting there. Worth another pass through the diagrams." :
+        pct >= 40 ? "Revisit the architecture and sequence diagrams." :
+                    "Start with the 'What blocks on which thread' diagram and come back.";
+      document.getElementById('verdict').textContent = verdict;
+      document.getElementById('result').classList.remove('hidden');
+      document.getElementById('result').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    function restart() {
+      state.answered = new Array(QUESTIONS.length).fill(null);
+      document.getElementById('result').classList.add('hidden');
+      updateProgress();
+      render();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    render();
+    updateProgress();
+  </script>
+</body>
+</html>

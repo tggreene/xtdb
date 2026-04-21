@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tx Lifecycle — Mermaid</title>
+<style>
+  body {
+    background: #0e1116;
+    color: #e6edf3;
+    font-family: 'Fira Mono', 'Cascadia Code', Consolas, monospace;
+    margin: 0;
+    padding: 2em;
+  }
+  h1 { font-weight: 500; margin: 0 0 0.5em 0; font-size: 1.3em; color: #adf; }
+  .hint { color: #888; font-size: 0.85em; margin-bottom: 1.5em; }
+  .diagram {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 1.5em;
+    overflow-x: auto;
+  }
+  .mermaid { text-align: center; }
+</style>
+</head>
+<body>
+  <h1>XTDB transaction lifecycle — sync mode</h1>
+  <div class="hint">Edit <code>tx-lifecycle.mmd</code> then refresh this page. B1 (red) = Kafka ack wait. B2 (purple) = indexer wait.</div>
+
+  <div class="diagram">
+    <pre class="mermaid" id="diagram">Loading...</pre>
+  </div>
+
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: 'dark',
+      themeVariables: {
+        darkMode: true,
+        background: '#161b22',
+        primaryColor: '#1f2937',
+        primaryTextColor: '#e6edf3',
+        primaryBorderColor: '#30363d',
+        lineColor: '#4af',
+        actorBkg: '#1e2a3a',
+        actorBorder: '#4af',
+        actorTextColor: '#cdf',
+        signalColor: '#8cf',
+        signalTextColor: '#cdf',
+        noteBkgColor: '#2a2a1a',
+        noteBorderColor: '#aa8',
+        noteTextColor: '#eec',
+      },
+      sequence: {
+        actorMargin: 60,
+        width: 160,
+        boxMargin: 15,
+      }
+    });
+
+    const res = await fetch('tx-lifecycle.mmd');
+    const src = await res.text();
+    const el = document.getElementById('diagram');
+    const { svg } = await mermaid.render('rendered', src);
+    el.outerHTML = svg;
+  </script>
+</body>
+</html>

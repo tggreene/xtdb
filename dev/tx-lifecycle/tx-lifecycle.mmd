@@ -1,0 +1,46 @@
+sequenceDiagram
+    autonumber
+    participant Client
+    participant PG as pgwire thread
+    participant Prod as producer IO thread
+    participant Broker as Kafka broker
+    participant LP as log processor thread
+    participant Idx as indexer
+    participant LI as live index
+    participant W as watchers
+
+    Client->>+PG: INSERT INTO users VALUES
+    Note over PG: parse, append to dml-buf
+    PG-->>-Client: CommandComplete
+
+    Client->>+PG: Sync or auto-commit
+    Note over PG: cmd-commit (sync mode)
+
+    rect rgba(255,100,100,0.15)
+        Note over PG,Prod: B1 - Kafka ack wait
+        PG->>Prod: producer.send record
+        Prod->>Prod: buffer, wait linger.ms
+        Prod->>+Broker: produce batch
+        Broker->>Broker: replicate (acks=all)
+        Broker-->>-Prod: ack offset=N
+        Prod-->>PG: callback completes Deferred
+    end
+    Note over PG: now have txId = N
+
+    rect rgba(160,100,255,0.15)
+        Note over PG,W: B2 - indexer wait
+        PG->>W: awaitTxBlocking N
+
+        par log processor (independent thread)
+            Broker-->>LP: poll returns record N
+            LP->>+Idx: process tx N
+            Idx->>Idx: decode Arrow, run DML
+            Idx->>LI: write to live index
+            Idx->>W: notifyCommitted N
+            Idx-->>-LP: done
+        end
+
+        W-->>PG: TransactionResult
+    end
+
+    PG-->>-Client: CommandComplete / ReadyForQuery

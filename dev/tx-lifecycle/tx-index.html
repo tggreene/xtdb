@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>XTDB Tx Lifecycle — Index</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --panel: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #888;
+    --accent: #6af;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Fira Mono', 'Cascadia Code', Consolas, monospace;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  header {
+    padding: 0.8em 1.5em;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    flex-shrink: 0;
+  }
+  header h1 {
+    margin: 0;
+    font-size: 1em;
+    font-weight: 500;
+    color: var(--accent);
+  }
+  header .sub {
+    color: var(--muted);
+    font-size: 0.8em;
+    margin-top: 0.2em;
+  }
+  .tabs {
+    display: flex;
+    flex-wrap: wrap;
+    background: #0a0d12;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .tab {
+    padding: 0.7em 1.2em;
+    cursor: pointer;
+    font-size: 0.85em;
+    color: var(--muted);
+    border-right: 1px solid var(--border);
+    border-bottom: 2px solid transparent;
+    user-select: none;
+    white-space: nowrap;
+    transition: background 0.1s, color 0.1s;
+  }
+  .tab:hover {
+    background: #141820;
+    color: var(--text);
+  }
+  .tab.active {
+    background: var(--panel);
+    color: var(--accent);
+    border-bottom: 2px solid var(--accent);
+  }
+  .tab .desc {
+    display: block;
+    font-size: 0.72em;
+    color: var(--muted);
+    margin-top: 0.2em;
+    font-weight: normal;
+  }
+  .tab.active .desc {
+    color: #89a;
+  }
+  .content {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+  }
+  .pane {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    overflow: auto;
+    display: none;
+    background: var(--bg);
+    padding: 2em;
+  }
+  .pane.active { display: block; }
+  .pane iframe {
+    width: 100%;
+    height: calc(100vh - 120px);
+    border: none;
+    background: var(--bg);
+  }
+  .pane.no-padding { padding: 0; }
+
+  h2 { font-weight: 500; margin: 0 0 0.5em 0; font-size: 1em; color: #8cf; border-bottom: 1px solid #334; padding-bottom: 0.2em; }
+  h2:not(:first-child) { margin-top: 1.8em; }
+  .hint { color: var(--muted); font-size: 0.85em; margin-bottom: 1em; }
+  .diagram {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.5em;
+    overflow-x: auto;
+  }
+  .legend {
+    font-size: 0.8em;
+    color: #aaa;
+    margin-top: 1em;
+    line-height: 1.7;
+  }
+  .legend .swatch {
+    display: inline-block;
+    width: 1em;
+    height: 0.8em;
+    margin-right: 0.4em;
+    vertical-align: middle;
+    border-radius: 2px;
+  }
+  .source-pane pre {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1em 1.2em;
+    margin: 0;
+    font-size: 0.85em;
+    color: #ccc;
+    overflow: auto;
+    white-space: pre;
+  }
+  kbd {
+    background: #2a2a2a;
+    border: 1px solid #444;
+    border-radius: 3px;
+    padding: 0.1em 0.4em;
+    font-size: 0.8em;
+    color: #cdf;
+  }
+</style>
+</head>
+<body>
+  <header>
+    <h1>XTDB transaction lifecycle — reference</h1>
+    <div class="sub">Use <kbd>1</kbd>–<kbd>6</kbd> to switch tabs, or click.</div>
+  </header>
+
+  <div class="tabs" id="tabs">
+    <div class="tab active" data-target="architecture">
+      Architecture
+      <span class="desc">components, threads, log contents</span>
+    </div>
+    <div class="tab" data-target="sequence">
+      Sequence
+      <span class="desc">tx lifecycle ordering across threads</span>
+    </div>
+    <div class="tab" data-target="walkthrough">
+      Walkthrough
+      <span class="desc">step-by-step tx trace with code</span>
+    </div>
+    <div class="tab" data-target="slides">
+      Slides
+      <span class="desc">linger.ms deep dive</span>
+    </div>
+    <div class="tab" data-target="quiz">
+      Quiz
+      <span class="desc">test your understanding</span>
+    </div>
+    <div class="tab" data-target="source">
+      Source
+      <span class="desc">raw mermaid for copy-paste</span>
+    </div>
+  </div>
+
+  <div class="content">
+
+    <!-- Architecture pane -->
+    <div id="architecture" class="pane active">
+      <h2>High-level</h2>
+      <div class="hint">Boxes = components. Arrows = data flow. Red edges = blocking calls on the pgwire thread.</div>
+      <div class="diagram">
+<pre class="mermaid">
+flowchart LR
+    Client(["Client<br/>JDBC / psql"]):::ext
+
+    subgraph Node["XTDB Node (one process)"]
+      direction TB
+      PG["pgwire server<br/>thread per conn"]:::comp
+      DML["dml-buf<br/>per-conn buffer"]:::buf
+      Prod["Kafka producer<br/>shared, one per node"]:::comp
+      LP["log processor<br/>consumer thread"]:::comp
+      Idx["indexer"]:::comp
+      LI[("live index<br/>in-memory tries")]:::data
+      W(["watchers<br/>coroutine rendezvous"]):::wait
+      BP["buffer pool"]:::comp
+    end
+
+    Kafka[("Kafka<br/>source-of-truth log")]:::log
+    Store[("Object Storage<br/>S3 / Azure / local")]:::storage
+
+    Client -->|SQL over pgwire| PG
+    PG -->|append ops| DML
+    DML -->|on COMMIT| Prod
+    Prod -->|send + await ack| Kafka
+    Kafka -->|poll| LP
+    LP --> Idx
+    Idx -->|write| LI
+    Idx -.->|notify txId| W
+    W -.->|wake pgwire thread| PG
+
+    LI -->|periodic flush| BP
+    BP --> Store
+
+    classDef ext fill:#1e2a3a,stroke:#4af,color:#cdf
+    classDef comp fill:#1e2a3a,stroke:#3a5a7a,color:#cdf
+    classDef buf fill:#1a2a1a,stroke:#4c4,color:#8f8
+    classDef log fill:#2a1e3a,stroke:#a4f,color:#d8f
+    classDef storage fill:#2a2a1e,stroke:#aa4,color:#ee8
+    classDef data fill:#111,stroke:#666,color:#ccc
+    classDef wait fill:#2a1515,stroke:#f66,color:#f88
+
+    linkStyle 3 stroke:#f66,stroke-width:3px
+    linkStyle 4 stroke:#f66,stroke-width:3px
+</pre>
+      </div>
+      <div class="legend">
+        <div><span class="swatch" style="background:#1e2a3a; border:1px solid #4af;"></span>External / client</div>
+        <div><span class="swatch" style="background:#1e2a3a; border:1px solid #3a5a7a;"></span>Component (code)</div>
+        <div><span class="swatch" style="background:#2a1e3a; border:1px solid #a4f;"></span>Log (Kafka)</div>
+        <div><span class="swatch" style="background:#2a2a1e; border:1px solid #aa4;"></span>Object storage</div>
+        <div><span class="swatch" style="background:#2a1515; border:1px solid #f66;"></span>Watchers (where threads park waiting for indexing)</div>
+        <div style="margin-top:0.4em;"><b style="color:#f66;">Thick red arrows</b> = blocking hops on pgwire thread. <b style="color:#aaa;">Dashed</b> = signals.</div>
+      </div>
+
+      <h2>What blocks on which thread</h2>
+      <div class="diagram">
+<pre class="mermaid">
+flowchart TB
+    subgraph PgwireThread["pgwire connection thread"]
+      direction TB
+      A1["cmd-commit"] --> A2["producer.send"]
+      A2 -.->|returns immediately| A3["await Deferred"]
+      A3 --> A4["awaitTxBlocking txId"]
+      A4 --> A5["send response"]
+    end
+
+    subgraph ProducerThread["Kafka producer I/O thread"]
+      direction TB
+      B1["read from buffer"] --> B2["wait linger.ms"]
+      B2 --> B3["batch send to broker"]
+      B3 --> B4["receive ack"]
+      B4 --> B5["fire callback<br/>complete Deferred"]
+    end
+
+    subgraph ConsumerThread["log processor thread"]
+      direction TB
+      C1["poll Kafka"] --> C2["for each record"]
+      C2 --> C3["indexer runs tx"]
+      C3 --> C4["write live index"]
+      C4 --> C5["watchers.notify txId"]
+    end
+
+    A2 -.->|queues record| B1
+    B5 -.->|unblocks A3| A3
+    C5 -.->|unblocks A4| A4
+
+    style A3 fill:#2a1515,stroke:#f66,color:#f88
+    style A4 fill:#2a1e3a,stroke:#a4f,color:#d8f
+    style B2 fill:#2a2000,stroke:#f84,color:#fa6
+</pre>
+      </div>
+      <div class="legend">
+        Each column is a thread. Dashed cross-column arrows = signalling via Deferred / watcher.<br/>
+        <span style="color:#f88;">Red box</span> = B1 Kafka ack wait. <span style="color:#d8f;">Purple box</span> = B2 indexer wait. <span style="color:#fa6;">Orange box</span> = linger.ms delay.
+      </div>
+
+      <h2>What Kafka actually holds</h2>
+      <div class="diagram">
+<pre class="mermaid">
+flowchart LR
+    subgraph Log["Kafka topic (single partition)"]
+      direction LR
+      T0["offset 0<br/>Tx"]
+      T1["offset 1<br/>Tx"]
+      T2["offset 2<br/>FlushBlock"]
+      T3["offset 3<br/>Tx"]
+      T4["offset 4<br/>TriesAdded"]
+      T5["offset 5<br/>BlockUploaded"]
+      T6["offset 6<br/>Tx"]
+      T0 --> T1 --> T2 --> T3 --> T4 --> T5 --> T6
+    end
+
+    subgraph NodeA["Node A - writer"]
+      Acur["current msgId = 6"]
+    end
+
+    subgraph NodeB["Node B - replica, catching up"]
+      Bcur["current msgId = 4"]
+    end
+
+    Log -.->|consumes| NodeA
+    Log -.->|consumes| NodeB
+
+    classDef tx fill:#1e2a3a,stroke:#3a5a7a,color:#cdf
+    classDef meta fill:#2a2000,stroke:#f84,color:#fa6
+
+    class T0,T1,T3,T6 tx
+    class T2,T4,T5 meta
+</pre>
+      </div>
+      <div class="legend">
+        Two kinds of messages: user txs (<span style="color:#cdf;">blue</span>) and system messages (<span style="color:#fa6;">orange</span>: FlushBlock, TriesAdded, BlockUploaded, AttachDatabase, DetachDatabase).<br/>
+        Every node consumes the same log and derives the same state. A node's position = its current offset.
+      </div>
+    </div>
+
+    <!-- Sequence pane -->
+    <div id="sequence" class="pane">
+      <h2>Transaction lifecycle — sync mode</h2>
+      <div class="hint">B1 (red) = Kafka ack wait. B2 (purple) = indexer wait. The log processor runs on its own thread.</div>
+      <div class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant Client
+    participant PG as pgwire thread
+    participant Prod as producer IO thread
+    participant Broker as Kafka broker
+    participant LP as log processor thread
+    participant Idx as indexer
+    participant LI as live index
+    participant W as watchers
+
+    Client->>+PG: INSERT INTO users VALUES
+    Note over PG: parse, append to dml-buf
+    PG-->>-Client: CommandComplete
+
+    Client->>+PG: Sync or auto-commit
+    Note over PG: cmd-commit (sync mode)
+
+    rect rgba(255,100,100,0.15)
+        Note over PG,Prod: B1 - Kafka ack wait
+        PG->>Prod: producer.send record
+        Prod->>Prod: buffer, wait linger.ms
+        Prod->>+Broker: produce batch
+        Broker->>Broker: replicate (acks=all)
+        Broker-->>-Prod: ack offset=N
+        Prod-->>PG: callback completes Deferred
+    end
+    Note over PG: now have txId = N
+
+    rect rgba(160,100,255,0.15)
+        Note over PG,W: B2 - indexer wait
+        PG->>W: awaitTxBlocking N
+
+        par log processor (independent thread)
+            Broker-->>LP: poll returns record N
+            LP->>+Idx: process tx N
+            Idx->>Idx: decode Arrow, run DML
+            Idx->>LI: write to live index
+            Idx->>W: notifyCommitted N
+            Idx-->>-LP: done
+        end
+
+        W-->>PG: TransactionResult
+    end
+
+    PG-->>-Client: CommandComplete / ReadyForQuery
+</pre>
+      </div>
+    </div>
+
+    <!-- Walkthrough pane (iframe for reveal.js) -->
+    <div id="walkthrough" class="pane no-padding">
+      <iframe src="tx-walkthrough.html" title="Walkthrough"></iframe>
+    </div>
+
+    <!-- Slides pane (iframe for reveal.js) -->
+    <div id="slides" class="pane no-padding">
+      <iframe src="tx-lifecycle.html" title="Slides"></iframe>
+    </div>
+
+    <!-- Quiz pane (iframe - no mermaid, so safe) -->
+    <div id="quiz" class="pane no-padding">
+      <iframe src="tx-quiz.html" title="Quiz"></iframe>
+    </div>
+
+    <!-- Source pane -->
+    <div id="source" class="pane source-pane">
+      <h2>Raw mermaid source</h2>
+      <div class="hint">Copy-paste into <a href="https://mermaid.live" target="_blank" style="color:#6af;">mermaid.live</a> or a <code>.mmd</code> file.</div>
+      <pre id="mmd-content">Loading tx-lifecycle.mmd ...</pre>
+    </div>
+
+  </div>
+
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+      themeVariables: {
+        darkMode: true,
+        background: '#161b22',
+        primaryColor: '#1f2937',
+        primaryTextColor: '#e6edf3',
+        primaryBorderColor: '#30363d',
+        lineColor: '#6af',
+        actorBkg: '#1e2a3a',
+        actorBorder: '#4af',
+        actorTextColor: '#cdf',
+        signalColor: '#8cf',
+        signalTextColor: '#cdf',
+        noteBkgColor: '#2a2a1a',
+        noteBorderColor: '#aa8',
+        noteTextColor: '#eec',
+      },
+      flowchart: { curve: 'basis', padding: 15, nodeSpacing: 40, rankSpacing: 60 },
+      sequence: { actorMargin: 60, width: 160, boxMargin: 15 }
+    });
+  </script>
+
+  <script>
+    const tabs = document.querySelectorAll('.tab');
+    const panes = document.querySelectorAll('.pane');
+
+    function activate(target) {
+      tabs.forEach(t => t.classList.toggle('active', t.dataset.target === target));
+      panes.forEach(p => p.classList.toggle('active', p.id === target));
+    }
+
+    tabs.forEach(t => t.addEventListener('click', () => activate(t.dataset.target)));
+
+    document.addEventListener('keydown', (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      const keys = { '1': 'architecture', '2': 'sequence', '3': 'walkthrough', '4': 'slides', '5': 'quiz', '6': 'source' };
+      if (keys[e.key]) activate(keys[e.key]);
+    });
+
+    // Load mmd source
+    fetch('tx-lifecycle.mmd')
+      .then(r => r.ok ? r.text() : Promise.reject('fetch failed'))
+      .then(src => { document.getElementById('mmd-content').textContent = src; })
+      .catch(() => {
+        document.getElementById('mmd-content').textContent =
+          'Could not fetch tx-lifecycle.mmd.\n\n' +
+          'Browsers block fetch() on file:// URLs.\n' +
+          'Serve with: python3 -m http.server 8000\n' +
+          'Then open: http://localhost:8000/tx-index.html';
+      });
+  </script>
+</body>
+</html>
