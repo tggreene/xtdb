@@ -1,0 +1,303 @@
+= Transaction lifecycle and Kafka linger.ms
+:toc: left
+:toclevels: 3
+
+This document traces an XTDB transaction from pgwire through to the indexer, and uses that trace to explain why Kafka 4.0's `linger.ms=5` default doesn't help us.
+
+It's a working document — written during an investigation triggered by benchmark anomaly alerts.
+Keep it up to date if the architecture changes; delete it if it becomes stale.
+
+== Context
+
+Kafka 4.0 changed the producer's default `linger.ms` from `0` to `5`.
+When we accidentally pinned our transitive `kafka-clients` to Confluent's 7.8.0-ccs (Apache Kafka 3.8 base), we inadvertently also reverted to `linger.ms=0`.
+The benchmarks got ~40% faster overnight.
+The fix was to pin `kafka-clients` to the declared version (see PR #5453) and to set `linger.ms=0` explicitly in our producer config (PR #5452).
+
+That raised the obvious question: should we just work with `linger.ms=5` and reshape XTDB to benefit from batching?
+The investigation below says *probably not*.
+
+== The lifecycle (sync mode, one INSERT)
+
+=== Step 1: pgwire receives DML
+
+The client sends `INSERT INTO users VALUES (1, 'alice')` over the pgwire protocol.
+XTDB has one thread per connection.
+The thread parses the message.
+
+If there's no open transaction, pgwire opens an implicit one (`:implicit? true, :access-mode :read-write`).
+The statement is parsed into a `Sql` op and appended to `[:transaction :dml-buf]` on `conn-state`.
+
+*No I/O yet.* Pgwire responds `CommandComplete` to the client immediately.
+
+See `core/src/main/clojure/xtdb/pgwire.clj:1320`.
+
+=== Step 2: auto-commit or explicit COMMIT
+
+In simple query mode, `cmd-commit` fires after all statements in the query finish.
+In extended query mode, it fires on the `Sync` message.
+Either way the entry point is `cmd-commit` at `pgwire.clj:559`.
+
+`cmd-commit` pulls `dml-buf`, opens the ops as Arrow buffers, and branches on `async?`:
+
+* sync mode (default): calls `.executeTx node default-db tx-ops tx-opts`
+* async mode (`BEGIN WITH (ASYNC = TRUE)`): calls `.submitTx ...`
+
+=== Step 3: executeTx = submitTx + awaitTx
+
+`executeTx` at `core/src/main/clojure/xtdb/node/impl.clj:170` does two things in order:
+
+[source,clojure]
+----
+(executeTx [this db-name tx-ops tx-opts]
+  (let [tx-id (.getTxId (.submitTx this db-name tx-ops tx-opts))  ; B1 inside here
+        db (.databaseOrNull db-cat db-name)
+        {...} (await-msg-result this db tx-id)]                    ; B2 inside here
+    (Xtdb$ExecutedTx. tx-id system-time committed? error)))
+----
+
+Two blocking points on the pgwire thread, strictly sequential.
+The second one can't start until the first returns, because it needs the `txId`.
+
+=== Step 4: B1 — the Kafka ack wait
+
+`submitTx` → `submitTxBlocking` (Database.kt:113) → `sourceLog.appendMessageBlocking` → `runBlocking { appendMessage() }`:
+
+[source,kotlin]
+----
+override suspend fun appendMessage(message: M): MessageMetadata =
+    CompletableDeferred<MessageMetadata>()
+        .also { res ->
+            producer.send(ProducerRecord(topic, null, Unit, codec.encode(message))) { meta, e ->
+                if (e == null) res.complete(Log.MessageMetadata(epoch, meta.offset(), ...))
+                else res.completeExceptionally(e)
+            }
+        }
+        .await()   // ← pgwire thread parked here
+----
+
+`producer.send()` returns immediately — it just queues the record into the producer's internal accumulator.
+The `.await()` parks the pgwire thread until the Kafka producer's I/O thread fires the callback with the broker's ack.
+
+The ack carries the Kafka offset.
+**The txId is the Kafka offset** — we literally can't proceed until we know it.
+
+Duration: depends on broker RTT, `acks` setting (`all` in our case), `linger.ms`.
+Typical range: 1-50ms.
+
+See `modules/kafka/src/main/kotlin/xtdb/api/log/KafkaCluster.kt:205-222`.
+
+=== Step 5: the producer I/O thread works (elsewhere)
+
+While the pgwire thread is parked, the producer's internal I/O thread does its own thing:
+
+. Reads records from the accumulator
+. If `linger.ms > 0`, waits up to that long for more records
+. Sends as a batch over TCP to the broker
+. Waits for broker ack (`acks=all` requires all in-sync replicas to confirm)
+. Fires the `send()` callbacks
+
+This is entirely inside the Kafka client library.
+
+=== Step 6: callback, B1 done
+
+Broker acks.
+Producer I/O thread fires the callback.
+Callback completes the `CompletableDeferred` with the assigned offset.
+Pgwire thread unblocks with `txId = N`.
+
+=== Step 7: B2 — the indexer wait
+
+Still on the pgwire thread, still in `executeTx`:
+
+[source,clojure]
+----
+(defn- await-msg-result [node ^Database db msg-id]
+  (when-let [tx-res (.awaitTxBlocking db msg-id nil)]
+    ...))
+----
+
+And `awaitTxBlocking` at Database.kt:89:
+
+[source,kotlin]
+----
+fun awaitTxBlocking(txId: Long, timeout: Duration? = null): TransactionResult? =
+    runBlocking {
+        watchers.awaitTx(txId)   // ← pgwire thread parked here
+    }
+----
+
+This is the second blocking point.
+It waits for a specific thing: the indexer to process *this particular txId* and signal via `watchers`.
+
+=== Step 8: the log processor (different thread)
+
+Independent of everything above, the log processor has been running on its own thread, continuously polling Kafka:
+
+[source,kotlin]
+----
+override suspend fun tailAll(afterMsgId, processor) {
+    consumer.assign(listOf(topicPartition))
+    consumer.seek(topicPartition, afterMsgId + 1)
+
+    while (isActive) {
+        val records = consumer.poll(pollDuration)
+        if (records.isNotEmpty()) processor.processRecords(records)
+    }
+}
+----
+
+It sees the record at offset N (the one we submitted).
+Feeds it to the indexer.
+
+=== Step 9: indexer runs the tx
+
+The indexer decodes the Arrow-serialised ops, runs the DML, writes to the live index (in-memory trie).
+
+On success: `watchers.notifyCommitted(txId, systemTime)`.
+On failure (constraint, ASSERT, schema conflict, etc.): `watchers.notifyAborted(txId, error)`.
+
+Either way, the notification resumes whoever is awaiting that txId.
+
+=== Step 10: B2 done
+
+The parked pgwire coroutine resumes with a `TransactionResult` (Committed or Aborted).
+Pgwire thread unblocks.
+
+=== Step 11: response to client
+
+If aborted, the error is thrown and sent to the client.
+Otherwise: `CommandComplete` + `ReadyForQuery`.
+
+== Summary of blocking points
+
+[cols="1,3,2,2"]
+|===
+| Point | Waits for | Typical duration | Skipped in async mode?
+
+| B1
+| Kafka ack (to get txId)
+| 1-50ms (depends on RTT + `linger.ms`)
+| No
+
+| B2
+| Indexer to process the specific txId
+| 10ms-seconds
+| Yes
+|===
+
+Async mode (`submitTx`) only skips B2.
+B1 is unavoidable while the txId is the Kafka offset.
+
+== Why `linger.ms=5` doesn't help XTDB
+
+=== The mental model
+
+Linger.ms delays the producer I/O thread from flushing a batch by up to N ms, hoping more messages arrive in that window so the batch can be larger and save network round-trips.
+
+It helps when:
+
+* Messages arrive at the producer *spread out over time*, AND
+* RTT is small enough that *per-batch overhead* dominates *batch-size savings*.
+
+It doesn't help when:
+
+* Messages arrive in clusters (single round trip already fits many), OR
+* RTT is large enough that the producer's in-flight batching already amortises the cost.
+
+=== XTDB's arrival pattern doesn't spread
+
+In the current architecture, every caller (pgwire thread, or any direct `submit-tx`) blocks on its own ack at B1 before starting the next tx.
+That means:
+
+. Under single-threaded load, messages arrive one at a time with RTT between them — no batching possible, linger just wastes 5ms per send.
+. Under multi-threaded load (e.g. 50 connections), all threads unblock together when their acks arrive, sending their next message in a burst. The producer sees a burst, flushes it as one batch, then waits for those acks. **Even without linger, batches are RTT-sized** — linger doesn't make them bigger.
+
+The Kafka producer already does "free" batching via its **in-flight request pipelining**.
+With idempotent producers, up to 5 batches can be in flight per connection.
+While batch 1 is on the wire, records accumulating for batch 2 get naturally gathered.
+The RTT window is the real batching window.
+Linger would only add on top of that if the arrival rate was sparse enough to *not* fill the RTT window — which we don't see in practice.
+
+=== Empirical results
+
+All runs: 5000 docs, batch size 1, local Docker Kafka (unless noted).
+
+[cols="2,1,1"]
+|===
+| Scenario | linger.ms=0 | linger.ms=5
+
+| Sync, serial (1 conn)
+| 30s
+| 63s
+
+| Async, serial (1 conn)
+| 5.4s
+| 39.5s
+
+| Sync, 10 concurrent
+| 5.7s
+| 9.5s
+
+| Sync, 50 concurrent
+| 5.4s
+| 5.0s
+
+| Sync, 50 concurrent, 10ms injected RTT
+| 40s
+| 59s
+
+| Sync, 50 concurrent, 25ms injected RTT
+| 76s
+| 88s
+|===
+
+Even with injected broker latency and high concurrency, we could not find a regime where `linger.ms=5` beat `linger.ms=0`.
+
+=== What would need to change for linger to help
+
+The only regime where it could plausibly help is one we don't run in today:
+
+* A write path that doesn't block per-message on the Kafka ack (fire-and-forget submit with a correlation ID that's matched on the indexer side).
+* This removes the "RTT-spaced bursts" pattern and lets messages arrive continuously at the producer.
+* Linger then gets a chance to accumulate more than the RTT window would naturally give it.
+
+That change is much bigger than it sounds — it requires decoupling the txId from the Kafka offset (or accepting a new id scheme), and giving up the B1 blocking property that underpins current error-reporting guarantees in sync mode.
+
+== Is linger the prize if we do the architectural change?
+
+Probably not.
+
+Even in theory, single-partition idempotent producers are capped at `max.in.flight.requests.per.connection = 5`.
+Throughput ceiling is `5 × batch_size / RTT`.
+At 10ms RTT and 100-msg batches: ~50,000 msgs/sec.
+At 100ms RTT: 5,000 msgs/sec.
+
+Our current ingest-tx-overhead benchmark at 50 threads + 10ms injected RTT achieves ~50 msgs/sec.
+That's *miles* below the Kafka ceiling, so Kafka throughput is not the bottleneck.
+The real ceiling is somewhere in XTDB's per-tx overhead — probably `submitTxBlocking` itself, Arrow serialisation, lock contention on the shared producer, or similar.
+
+If we ever pursue the architectural change, the motivation should be:
+
+* Lower per-tx latency (pgwire threads free up sooner)
+* Better fairness under concurrent load (one slow tx doesn't park its thread)
+
+Not:
+
+* Linger.ms savings
+
+== Recommendations
+
+. Keep `linger.ms=0` explicit in our producer config (done in PR #5452).
+. Keep `kafka-clients` pinned to a declared version, independent of transitive resolution (done in PR #5453).
+. If per-tx latency becomes a real problem, consider the fire-and-forget + correlation-id architectural change — but motivated by latency, not linger.
+. Before any further investment, profile the sync ingest path to confirm *where* the actual ceiling is today.
+
+== Further reading
+
+* `modules/kafka/src/main/kotlin/xtdb/api/log/KafkaCluster.kt` — producer/consumer config
+* `core/src/main/kotlin/xtdb/database/Database.kt` — `submitTxBlocking`, `awaitTxBlocking`
+* `core/src/main/clojure/xtdb/node/impl.clj` — `executeTx`, `await-msg-result`
+* `core/src/main/clojure/xtdb/pgwire.clj` — `cmd-commit`, dml buffering
+* `core/src/main/kotlin/xtdb/util/MsgIdUtil.kt` — tx-id = `(epoch << 48) | offset`
+* Kafka producer docs — https://kafka.apache.org/41/configuration/producer-configs.html[4.1 producer configs], particularly `linger.ms`, `max.in.flight.requests.per.connection`, `enable.idempotence`
