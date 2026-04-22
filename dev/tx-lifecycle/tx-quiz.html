@@ -190,7 +190,7 @@
 </head>
 <body>
   <h1>XTDB tx lifecycle quiz</h1>
-  <div class="sub">Click an answer. You get immediate feedback. Try not to peek at the diagrams. 14 questions.</div>
+  <div class="sub">Click an answer. You get immediate feedback. 29 questions — first 14 are warm-up, the rest probe edge cases & design intent. Try not to peek.</div>
 
   <div class="progress"><div class="bar" id="progress-bar"></div></div>
 
@@ -348,6 +348,174 @@
         ],
         correct: 1,
         explain: "Storage blocks carry their msgId coverage. Node reads the latest, then tails the log from there. No snapshot file — storage <em>is</em> the snapshot."
+      },
+
+      // ─── Hard mode ─── questions that probe edge cases and trick understanding
+
+      {
+        q: "The pgwire thread gets the Kafka ack and has txId=N. Then the XTDB node crashes before the indexer processes record N. After restart, what happens to that tx?",
+        options: [
+          "Lost — the client got a txId back but the indexer never saw the record",
+          "Replayed on restart — log processor starts from last indexed offset, runs N through the indexer, commits or aborts as normal",
+          "Marked aborted because it was in flight during the crash",
+          "Requires manual recovery via an admin command",
+        ],
+        correct: 1,
+        explain: "The log is primary. Anything that passed B1 is durable in Kafka. The log processor is <em>stateless across restarts</em> — it resumes from the last indexed offset in storage. The client's txId is still valid."
+      },
+      {
+        q: "Client runs: <code>BEGIN; INSERT INTO a ...; INSERT INTO b ...; COMMIT;</code> — what does Kafka receive?",
+        options: [
+          "Two records (one per INSERT), linked by a transaction marker",
+          "One record containing both ops; the indexer processes them atomically",
+          "Two records that the indexer batches before committing",
+          "One record per row inserted",
+        ],
+        correct: 1,
+        explain: "DML accumulates in <code>dml-buf</code> on the pgwire connection. On COMMIT, the whole lot flushes as a single <code>SourceMessage.Tx</code>. One Kafka record = one atomic indexer step."
+      },
+      {
+        q: "Why does XTDB insist on single-partition topics?",
+        options: [
+          "Multi-partition Kafka has worse write latency",
+          "To get a global total order — Kafka only guarantees order <em>within</em> a partition",
+          "To keep broker count and replication simple",
+          "Multi-partition complicates consumer rebalancing",
+        ],
+        correct: 1,
+        explain: "Our semantics demand total ordering of all transactions. Kafka's ordering guarantee is per-partition, so one partition = total order. It also cleanly gives us txId = offset."
+      },
+      {
+        q: "We use <code>acks=all</code>. What if we changed to <code>acks=1</code>?",
+        options: [
+          "Writes get faster but can be lost if the leader dies before replicating to followers",
+          "No change — replication is transparent to the producer",
+          "Ordering guarantees break",
+          "Idempotent producer stops working",
+        ],
+        correct: 0,
+        explain: "<code>acks=1</code>: only the leader confirms. If it fails over before followers catch up, those writes are gone. <code>acks=all</code> waits for all in-sync replicas."
+      },
+      {
+        q: "With idempotent producer and <code>max.in.flight.requests.per.connection=5</code>, how does linger.ms interact with the in-flight pipeline?",
+        options: [
+          "Linger only applies to the first batch in flight",
+          "Batches 2-5 skip linger because they're urgent",
+          "Each batch independently waits up to linger.ms before sending — linger can delay <em>every</em> batch",
+          "Pipelining automatically disables linger",
+        ],
+        correct: 2,
+        explain: "Linger is a per-batch property, not per-connection. Every batch that starts forming pays the linger cost. This is why linger=5 can still hurt even under high concurrency."
+      },
+      {
+        q: "A tx fails during indexing (<code>ASSERT</code> fails, unique violation, etc.). What happens to its Kafka record?",
+        options: [
+          "It's rolled back and the offset is reused",
+          "It stays in the log; the indexer records it as aborted and notifies watchers with the error",
+          "It's moved to a dead-letter topic",
+          "The log processor pauses until the error is resolved",
+        ],
+        correct: 1,
+        explain: "Kafka is append-only — you can't delete a record. The indexer processes it, decides 'abort', records that in <code>xt.txs</code>, and signals the watcher. The log advances past it."
+      },
+      {
+        q: "An <code>awaitTxBlocking</code> call is cancelled (timeout, connection drop). What does the indexer do?",
+        options: [
+          "Aborts its processing of that tx",
+          "Nothing — it doesn't know about watchers; it just processes records in order",
+          "Receives a cancellation signal and may or may not honour it",
+          "Retries the tx",
+        ],
+        correct: 1,
+        explain: "The indexer doesn't know or care who's waiting. Watchers is purely a notification layer — cancellation affects the waiter, not the indexer."
+      },
+      {
+        q: "Two pgwire connections COMMIT at the same instant. Which one gets the lower txId?",
+        options: [
+          "Whichever reaches the producer's I/O thread first in its accumulator",
+          "The connection with the earlier system-time",
+          "The one that started its BEGIN earlier",
+          "Non-deterministic from the broker's side",
+        ],
+        correct: 0,
+        explain: "The shared producer serialises: whoever's record the I/O thread picks up first gets sent first, and Kafka assigns offsets in broker-arrival order. The winner is essentially determined by thread scheduling inside the producer."
+      },
+      {
+        q: "Our matrix showed linger=0 beating linger=5 even at 50 threads with 25ms injected RTT. The most accurate explanation is:",
+        options: [
+          "The benchmark is measuring the wrong thing",
+          "5ms linger per batch is pure overhead, AND the producer's in-flight pipelining already batches naturally during the RTT window — so linger adds cost but captures little additional saving",
+          "Our pgwire layer adds too much per-request overhead to benefit",
+          "Kafka's client library ignores linger when idempotent",
+        ],
+        correct: 1,
+        explain: "Two things together: linger adds latency per batch, <em>and</em> the in-flight pipeline (5 batches × RTT) already does most of the batching work you'd hope linger adds. So linger is net-negative for our pattern."
+      },
+      {
+        q: "If we swapped Kafka for a different ordered durable log (say, a Postgres-based one), what structurally changes in the tx lifecycle?",
+        options: [
+          "Everything — it's a full rewrite",
+          "Almost nothing — B1 and B2 still exist, we still need a log, a log processor, an indexer. Only the <code>Log</code> implementation changes",
+          "Only queries need updating",
+          "Only B1 disappears",
+        ],
+        correct: 1,
+        explain: "Kafka isn't special here — it's an implementation of the <code>Log</code> abstraction. The lifecycle is about <em>having</em> an ordered durable log, not specifically about Kafka."
+      },
+      {
+        q: "Our ingest-tx-overhead benchmark at 50 threads + 10ms RTT hits ~50 msgs/sec. Kafka's ceiling for that config (5 in-flight batches × decent batch sizes) is easily 10k+/sec. What does this imply?",
+        options: [
+          "Our Kafka config is broken",
+          "The benchmark is mis-measuring",
+          "The broker is overloaded",
+          "Kafka isn't the bottleneck — the ceiling is somewhere upstream in XTDB (submitTx overhead, shared-producer contention, Arrow serialisation, etc.)",
+        ],
+        correct: 3,
+        explain: "This is the most important realisation from the investigation. Decoupling send/await for linger would be solving a problem we don't actually have. The real ceiling is elsewhere."
+      },
+      {
+        q: "If we moved to a fire-and-forget model where the server responds <em>before</em> the Kafka ack arrives, what durability guarantee disappears?",
+        options: [
+          "None — it's equivalent",
+          "Kafka's replication stops working",
+          "At response time, the tx is only in the node's in-memory producer buffer. If the node crashes before Kafka acks, the tx is lost even though the client thinks it was accepted",
+          "Ordering guarantees break",
+        ],
+        correct: 2,
+        explain: "This is what makes the architectural change scary. You'd need client-provided correlation IDs and a 'check by correlation id, retry if missing' idempotency pattern — i.e., a different contract with the client, not a drop-in change."
+      },
+      {
+        q: "Given the investigation findings, the most honest motivation to pursue the send/await decoupling is:",
+        options: [
+          "Throughput — Kafka is our bottleneck",
+          "linger.ms would finally help us",
+          "Lower per-tx latency and freeing pgwire threads sooner — <em>not</em> linger",
+          "It would let us use multi-partition topics",
+        ],
+        correct: 2,
+        explain: "Linger is a red herring. The honest case for the change is per-tx latency and pgwire thread economy. Pitch it on its merits or don't pitch it."
+      },
+      {
+        q: "True or false: <code>BEGIN READ WRITE WITH (ASYNC = TRUE); INSERT ...; COMMIT;</code> returns to the client <em>before</em> the Kafka ack arrives.",
+        options: [
+          "True — that's what makes it async",
+          "False — async mode still waits for the Kafka ack (it needs the txId); it only skips the indexer wait (B2)",
+          "True in the extended protocol, false in the simple query mode",
+          "Only true if connection pooling is enabled",
+        ],
+        correct: 1,
+        explain: "This one catches people. Async mode = skip B2 (indexer wait), but B1 (Kafka ack) is still there because the txId is the Kafka offset. The client does eventually get back a real txId."
+      },
+      {
+        q: "The log contains a <code>FlushBlock</code> message. Who produces it, and why?",
+        options: [
+          "Kafka, as an internal housekeeping record",
+          "The indexer, after it's done running a tx",
+          "The node itself, when the live index hits a size threshold — other nodes need to know when to pick up the new block from storage",
+          "Clients, explicitly via a SQL command",
+        ],
+        correct: 2,
+        explain: "The log is the coordination channel. <code>FlushBlock</code> / <code>TriesAdded</code> / <code>BlockUploaded</code> let every node agree on when storage has advanced, all via the same ordered log that carries user transactions."
       },
     ];
 
