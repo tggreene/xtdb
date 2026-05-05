@@ -166,6 +166,38 @@ class AdbcTest {
     // (allocates on the wrong root). Tested at the FlightSQL level via `test FlightSQL getSqlInfo` instead.
 
     @Test
+    fun `getInfo emits all four hardcoded info codes (in-process)`() {
+        xtdb.connect().use { c ->
+            c.getInfo().use { rdr ->
+                assertTrue(rdr.loadNextBatch())
+                val root = rdr.vectorSchemaRoot
+                assertEquals(4, root.rowCount, "row count")
+
+                val nameVec = root.getVector("info_name") as org.apache.arrow.vector.UInt4Vector
+                val valueVec = root.getVector("info_value") as org.apache.arrow.vector.complex.DenseUnionVector
+
+                val pairs = (0 until root.rowCount).associate { i ->
+                    val code = nameVec.getObject(i)
+                    val str = (valueVec.getObject(i) as? org.apache.arrow.vector.util.Text)?.toString()
+                    code to str
+                }
+
+                assertEquals(
+                    mapOf(
+                        org.apache.arrow.adbc.core.AdbcInfoCode.VENDOR_NAME.value to "XTDB",
+                        org.apache.arrow.adbc.core.AdbcInfoCode.VENDOR_VERSION.value to "dev",
+                        org.apache.arrow.adbc.core.AdbcInfoCode.DRIVER_NAME.value to "XTDB ADBC Driver",
+                        org.apache.arrow.adbc.core.AdbcInfoCode.DRIVER_VERSION.value to "dev",
+                    ),
+                    pairs,
+                )
+
+                assertFalse(rdr.loadNextBatch())
+            }
+        }
+    }
+
+    @Test
     fun `test ADBC getObjects at CATALOGS depth`() {
         conn.getObjects(GetObjectsDepth.CATALOGS, null, null, null, null, null).use { rdr ->
             assertTrue(rdr.loadNextBatch())
