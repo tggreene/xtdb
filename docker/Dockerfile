@@ -40,8 +40,10 @@ ENTRYPOINT ["java", \
 
 CMD ["-f", "config.yaml"]
 
+# `wget --spider` would send HEAD, which /healthz/alive answers 405 — leaving
+# every container permanently unhealthy. Discard the body instead.
 HEALTHCHECK --start-period=15s --timeout=3s \
-    CMD wget -q --spider http://localhost:8080/healthz/alive || exit 1
+    CMD wget -q -O /dev/null http://localhost:8080/healthz/alive || exit 1
 
 EXPOSE 5432
 EXPOSE 3000
