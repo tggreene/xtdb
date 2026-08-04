@@ -1666,6 +1666,38 @@
            (xt/q tu/*node* "SELECT docs._id FROM docs ORDER BY 1"))
         "order by column idx"))
 
+(t/deftest test-group-by-ordinal
+  (xt/submit-tx tu/*node* [[:put-docs :docs {:xt/id 1 :grp "a" :v 1}]
+                           [:put-docs :docs {:xt/id 2 :grp "a" :v 2}]
+                           [:put-docs :docs {:xt/id 3 :grp "b" :v 4}]])
+
+  (t/is (= #{{:grp "a", :n 2} {:grp "b", :n 1}}
+           (set (xt/q tu/*node* "SELECT docs.grp, COUNT(*) AS n FROM docs GROUP BY 1"))))
+
+  (t/is (= #{{:grp "a", :total 3} {:grp "b", :total 4}}
+           (set (xt/q tu/*node* "SELECT docs.grp, SUM(docs.v) AS total FROM docs GROUP BY 1")))
+        "ordinal alongside an aggregate over another column")
+
+  (t/is (= #{{:doubled 2, :n 1} {:doubled 4, :n 1} {:doubled 8, :n 1}}
+           (set (xt/q tu/*node* "SELECT docs.v * 2 AS doubled, COUNT(*) AS n FROM docs GROUP BY 1")))
+        "ordinal referring to a computed projection groups by the expression")
+
+  (t/is (= #{{:grp "a", :v 1, :n 1} {:grp "a", :v 2, :n 1} {:grp "b", :v 4, :n 1}}
+           (set (xt/q tu/*node* "SELECT docs.grp, docs.v, COUNT(*) AS n FROM docs GROUP BY 1, 2")))
+        "multiple ordinals")
+
+  (t/is (= #{{:grp "a", :v 1, :n 1} {:grp "a", :v 2, :n 1} {:grp "b", :v 4, :n 1}}
+           (set (xt/q tu/*node* "SELECT docs.grp, docs.v, COUNT(*) AS n FROM docs GROUP BY 1, docs.v")))
+        "ordinal mixed with a named column")
+
+  (t/is (anomalous? [:incorrect nil #"Invalid group by ordinal: 4"]
+                    (xt/q tu/*node* "SELECT docs.grp, COUNT(*) FROM docs GROUP BY 4"))
+        "out-of-range ordinal")
+
+  (t/is (anomalous? [:incorrect nil #"Invalid group by ordinal: 0"]
+                    (xt/q tu/*node* "SELECT docs.grp, COUNT(*) FROM docs GROUP BY 0"))
+        "ordinals are 1-based"))
+
 (t/deftest test-order-by-unqualified-derived-column-refs
   (xt/submit-tx tu/*node* [[:put-docs :docs {:xt/id 1 :x 3}]
                            [:put-docs :docs {:xt/id 2 :x 2}]

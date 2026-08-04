@@ -546,6 +546,10 @@
   PlanError
   (error-string [_] (format "Invalid order by ordinal: %s - out-cols: %s" ordinal out-cols)))
 
+(defrecord InvalidGroupByOrdinal [out-cols ordinal]
+  PlanError
+  (error-string [_] (format "Invalid group by ordinal: %s - out-cols: %s" ordinal out-cols)))
+
 (defrecord MissingGroupingColumns [missing-grouping-cols]
   PlanError
   (error-string [_] (format "Missing grouping columns: %s" missing-grouping-cols)))
@@ -592,6 +596,18 @@
                                              (visitExpressionGroupingSet [_ ctx]
                                                (let [expr (.accept (.expr ctx) gb-expr-visitor)]
                                                  (cond
+                                                   ;; `GROUP BY 1` refers to the first SELECT column, as in PG.
+                                                   ;; Resolved here rather than in the grammar so that it shares
+                                                   ;; the alias/expression handling of the branches below.
+                                                   (integer? expr)
+                                                   (let [projected @!projected-cols]
+                                                     (if (<= 1 (long expr) (count projected))
+                                                       (let [{:keys [col-sym]} (nth projected (dec (long expr)))]
+                                                         (if-let [gb-expr (get select-col-to-expr col-sym)]
+                                                           {:col-sym col-sym :expr gb-expr}
+                                                           {:col-sym col-sym}))
+                                                       (add-err! env (->InvalidGroupByOrdinal (mapv :col-sym projected) expr))))
+
                                                    ;; alias resolved to a SELECT col-sym with a complex expression
                                                    (and (lp/column? expr) (contains? select-col-to-expr expr))
                                                    {:col-sym expr :expr (get select-col-to-expr expr)}
