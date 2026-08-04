@@ -2557,9 +2557,21 @@ UNION ALL
     (t/is (= [{:i 1}]
              (xt/q tu/*node* "SELECT i FROM range(array_lower(string_to_array('public', ','), 1), array_upper(string_to_array('public', ','), 1) + 1) AS xs(i)"))))
 
-  (t/testing "default column name is generated when no column projection"
-    (t/is (= [{:xt/column-2 ["a" "b" "c"]}]
-             (xt/q tu/*node* "SELECT * FROM string_to_array('a,b,c', ',') AS t"))))
+  (t/testing "with no column projection the lone column takes the alias, as in PG"
+    (t/is (= [{:t ["a" "b" "c"]}]
+             (xt/q tu/*node* "SELECT * FROM string_to_array('a,b,c', ',') AS t")))
+
+    (t/is (= [{:t ["a" "b" "c"]}]
+             (xt/q tu/*node* "SELECT t FROM string_to_array('a,b,c', ',') AS t"))
+          "and so is addressable by that name")
+
+    ;; the generated suffix comes off a shared counter, so assert the shape
+    ;; rather than pinning the number
+    (let [[row :as rows] (xt/q tu/*node* "SELECT * FROM string_to_array('a,b,c', ',')")]
+      (t/is (= 1 (count rows)))
+      (t/is (= [["a" "b" "c"]] (vals row)))
+      (t/is (every? #(re-matches #"column-\d+" (name %)) (keys row))
+            "still generated when there's no alias to take")))
 
   (t/testing "multiple function sources in FROM"
     (t/is (= [{:a ["x" "y"], :b ["1" "2"]}]

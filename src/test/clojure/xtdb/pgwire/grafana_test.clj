@@ -40,3 +40,47 @@
                     FROM information_schema.columns
                     WHERE quote_ident(table_schema) = 'public' AND quote_ident(table_name) = 'foo'"))
         "Grafana lists columns via information_schema.columns"))
+
+(def ^:private search-path-schema-constraint
+  ;; Grafana resolves search_path into schema names with this subquery, and
+  ;; embeds it in both its table- and column-discovery queries.
+  "quote_ident(table_schema) IN (
+     SELECT CASE WHEN trim(s[i]) = '\"$user\"' THEN user ELSE trim(s[i]) END
+     FROM generate_series(
+            array_lower(string_to_array(current_setting('search_path'), ','), 1),
+            array_upper(string_to_array(current_setting('search_path'), ','), 1)
+          ) AS i,
+          string_to_array(current_setting('search_path'), ',') s
+   )")
+
+(t/deftest expr-derived-table-alias-binds-column-test
+  (t/testing "an aliased expression in FROM is addressable as a column, as in PG"
+    (t/is (= [{:s ["a" "b"]}]
+             (xt/q tu/*node* "SELECT s FROM string_to_array('a,b', ',') s")))
+
+    (t/is (= [{:x ["a" "b"]}]
+             (xt/q tu/*node* "SELECT x FROM string_to_array('a,b', ',') s (x)"))
+          "an explicit table projection still wins")
+
+    (t/is (= [{:s "a"}]
+             (xt/q tu/*node* "SELECT s[i] AS s FROM generate_series(1, 1) i, string_to_array('a,b', ',') s"))
+          "subscripting the alias across a cross join - the shape Grafana emits")))
+
+(t/deftest datasource-search-path-schema-constraint-test
+  (xt/execute-tx tu/*node* [[:sql "INSERT INTO foo (_id, name) VALUES (1, 'a')"]])
+
+  (t/is (= [{:schema "public"}]
+           (xt/q tu/*node* (str "SELECT DISTINCT quote_ident(table_schema) AS schema
+                                 FROM information_schema.tables
+                                 WHERE " search-path-schema-constraint)))
+        "the constraint resolves search_path to 'public' rather than matching nothing")
+
+  (t/is (seq (xt/q tu/*node* (str "SELECT quote_ident(column_name) AS column, data_type AS type
+                                   FROM information_schema.columns
+                                   WHERE CASE WHEN array_length(parse_ident('foo'), 1) = 2
+                                            THEN quote_ident(table_schema) = (parse_ident('foo'))[1]
+                                              AND quote_ident(table_name) = (parse_ident('foo'))[2]
+                                            ELSE quote_ident(table_name) = 'foo'
+                                              AND " search-path-schema-constraint "
+                                          END")))
+        "Grafana's real column-discovery query finds columns - it returned zero rows before #5170's gap was closed"))

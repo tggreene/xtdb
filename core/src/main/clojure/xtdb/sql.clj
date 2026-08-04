@@ -818,8 +818,11 @@
         (->ListTable env table-alias
                      (symbol (str table-alias "." (swap! !id-count inc)))
                      (or (->col-sym (first table-projection))
-                         (-> (->col-sym (str "_genseries." (swap! !id-count inc)))
-                             (vary-meta assoc :unnamed-unnest-col? true)))
+                         ;; PG names the lone column after the alias, so
+                         ;; `generate_series(1, 3) i` makes `i` addressable.
+                         ;; No :unnamed-unnest-col? — it's named now, and that
+                         ;; marker would have `SELECT *` rename it to _column_N.
+                         (->col-sym table-alias))
                      expr
                      (when with-ordinality?
                        (or (->col-sym (second table-projection))
@@ -830,7 +833,8 @@
     (let [expr (.accept (.expr ctx) (->ExprPlanVisitor env (or left-scope scope)))
 
           table-projection (->table-projection (.tableProjection ctx))
-          table-alias (or (identifier-sym (.tableAlias ctx))
+          explicit-alias (identifier-sym (.tableAlias ctx))
+          table-alias (or explicit-alias
                           (->col-sym (str "_expr." (swap! !id-count inc))))
           unique-table-alias (symbol (str table-alias "." (swap! !id-count inc)))
           with-ordinality? (boolean (.withOrdinality ctx))
@@ -840,6 +844,10 @@
                   (= expected-cols (count table-projection)))
         (add-err! env (->TableProjectionMismatch table-alias table-projection))
         (let [col-sym (or (->col-sym (first table-projection))
+                          ;; PG names the lone column after the alias, so
+                          ;; `FROM string_to_array(...) s` makes `s` addressable
+                          ;; as a column as well as a table.
+                          (when explicit-alias (->col-sym explicit-alias))
                           (->col-sym (str "_column_" (swap! !id-count inc))))
               output-cols (cond-> [col-sym]
                             with-ordinality?
